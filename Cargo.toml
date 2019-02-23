@@ -1,0 +1,11 @@
+[package]
+name = "sinsha"
+version = "0.1.0"
+authors = ["nohira hiroki <nohira.h.aa@m.titech.ac.jp>"]
+edition = "2018"
+
+[dependencies]
+ash = "0.27"
+image_crate = { package = "image", version = "0.21" }
+winit = "0.18"
+winapi = "0.3"
