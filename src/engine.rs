@@ -1,4 +1,5 @@
 use ash::vk::Result as VkResult;
+use ash::vk;
 
 use crate::vulkan_api::*;
 use crate::vulkan_api::gui::*;
@@ -57,33 +58,28 @@ impl Engine {
 
 	fn start_menu(&mut self) {
 		let mut interaction_devices = InteractionDevices::new(&self.window);
-		let sampler = self.vulkan.default_sampler();
-		let mut rect2ds = Rect2Ds::start_builder()
-			.next("quit", "assets/textures/info_box.png", sampler)
-			.extent(Extent2D {
-				top: 300,
-				bottom: 364,
-				left: 300,
-				right: 364,
-			})
-			.origin(TOP_LEFT)
-			.color([
-				RGBA::new(1.0, 1.0, 0.5, 1.0),
-				RGBA::new(1.0, 0.5, 1.0, 1.0),
-				RGBA::default(),
-				RGBA::new(0.5, 1.0, 1.0, 1.0)
-			])
-			.next_same_texture("test")
-			.extent(Extent2D {
-				top: -128,
-				bottom: 0,
-				left: -128,
-				right: 0,
-			})
-			.origin(BOTTOM_RIGHT)
-			.build(&self.vulkan);
 
-		let button = Button::new("quit", VirtualKeyCode::Escape);
+		let command_recorder = self.vulkan
+			.command_recorder()
+			.begin_recording();
+
+		let (textures, staging_buffer) = command_recorder.load_textures(
+			&["assets/textures/info_box.png"],
+			&[true],
+		);
+
+		let command_recorded = command_recorder.end_recording();
+		self.vulkan.submit_command_recorder(
+			&command_recorded,
+			vk::PipelineStageFlags::empty(),
+			&[],
+			&[],
+			&vk::Fence::null(),
+		);
+
+		self.vulkan.queue_wait_idle();
+		self.vulkan.destroy(command_recorded);
+		self.vulkan.destroy(staging_buffer);
 
 		let mut system_time = SystemTime::now();
 		let mut counter = 0_u64;
@@ -92,7 +88,6 @@ impl Engine {
 				Ok(command_recorder) => command_recorder,
 				Err(VkResult::ERROR_OUT_OF_DATE_KHR) | Err(VkResult::SUBOPTIMAL_KHR) => {
 					self.vulkan.deal_with_window_resize();
-					rect2ds.deal_with_window_resize(&self.vulkan);
 					continue;
 				},
 				Err(err) => panic!("{}", err.description()),
@@ -102,7 +97,6 @@ impl Engine {
 				.begin_recording()
 				.begin_render_pass(&self.vulkan.default_clear_value())
 				.enter_gui_pipeline()
-				.draw(&rect2ds)
 				.quit_gui_pipeline()
 				.end_render_pass()
 				.end_recording();
@@ -111,7 +105,6 @@ impl Engine {
 				Ok(()) => (),
 				Err(VkResult::ERROR_OUT_OF_DATE_KHR) | Err(VkResult::SUBOPTIMAL_KHR) => {
 					self.vulkan.deal_with_window_resize();
-					rect2ds.deal_with_window_resize(&self.vulkan);
 					continue;
 				},
 				Err(err) => panic!("{}", err.description()),
@@ -128,9 +121,6 @@ impl Engine {
 				}
 			});
 
-//			dbg!(&interaction_devices);
-			button.behavior(&interaction_devices, &mut rect2ds, || { close_requested = true });
-
 			if close_requested {
 				break;
 			}
@@ -143,7 +133,6 @@ impl Engine {
 			counter += 1;
 		}
 
-		self.vulkan.destroy(rect2ds);
-		self.vulkan.destroy(sampler);
+		self.vulkan.destroy(textures);
 	}
 }

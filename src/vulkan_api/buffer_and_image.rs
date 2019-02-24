@@ -5,16 +5,23 @@ use ash::vk::StructureType;
 
 use crate::vulkan_api::PhysicalDevice;
 use crate::vulkan_api::shaders::*;
+use crate::vulkan_api::command_recorder::CommandRecorder;
 use crate::vulkan_api::VkDestroy;
 
 use std::ptr;
 use std::mem;
-use crate::vulkan_api::command_recorder::CommandRecorder;
-use crate::vulkan_api::command_recorder::Natural;
+use std::marker::PhantomData;
+use std::ops::{Index, IndexMut, Range};
+
+pub trait Bytes {
+	fn into_bytes(self) -> Vec<u8>;
+	fn to_ref_bytes(&self) -> &Vec<u8>;
+}
 
 pub struct BuffersWithMemory {
 	buffer: vk::Buffer,
 	memory: vk::DeviceMemory,
+	offsets: Vec<vk::DeviceSize>,
 }
 
 pub struct BufferDataInfo {
@@ -23,19 +30,13 @@ pub struct BufferDataInfo {
 
 pub struct Image {
 	raw_handle: vk::Image,
-	offset: vk::DeviceSize,
-	size: vk::DeviceSize,
 	view: vk::ImageView,
 	format: vk::Format,
-	layout: vk::ImageLayout,
+	layout: Vec<vk::ImageLayout>,
 	extent: vk::Extent3D,
-	subresource_range: vk::ImageSubresourceRange,
-}
-
-pub struct ImageDataInfo {
-	bytes: Vec<u8>,
-	width: u32,
-	height: u32,
+	aspect_mask: vk::ImageAspectFlags,
+	mip_levels: u32,
+	array_layers: u32,
 }
 
 pub struct ImagesWithMemory {
@@ -43,19 +44,16 @@ pub struct ImagesWithMemory {
 	memory: vk::DeviceMemory,
 }
 
-pub struct ImagesWithMemoryBuilder<'a> {
-	physical_device: &'a PhysicalDevice,
-	device: &'a Device,
-	image_infos: Vec<ImageInfo>,
+pub struct ImagesIter<'a> {
+	ptr: *const Image,
+	end: *const Image,
+	_marker: PhantomData<&'a ImagesWithMemory>,
 }
 
-struct ImageInfo {
-	image: Image,
-	bytes: Vec<u8>,
-	usage: vk::ImageUsageFlags,
-	sharing_mode: vk::SharingMode,
-	image_type: vk::ImageType,
-	view_type: vk::ImageViewType,
+pub struct ImagesIterMut<'a> {
+	ptr: *mut Image,
+	end: *mut Image,
+	_marker: PhantomData<&'a mut ImagesWithMemory>,
 }
 
 pub struct ResourceLoader<'a> {
@@ -114,27 +112,23 @@ impl BuffersWithMemory {
 		Self {
 			buffer,
 			memory,
+			offsets: Vec::new(),
 		}
 	}
 
-	pub fn visible_coherent(
+	pub fn visible_coherent<T>(
 		physical_device: &PhysicalDevice,
 		device: &Device,
-		buffer_data_infos: Vec<BufferDataInfo>,
+		data_of_buffers: Vec<T>,
 		buffer_usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
 		memory_properties: vk::MemoryPropertyFlags,
-	) -> Self {
-		let buffer_data = buffer_data_infos
-			.into_iter()
-			.fold(Vec::new(), |mut buffer_data, mut info| {
-				buffer_data.append(&mut info.byte_data);
-				buffer_data
-			});
+	) -> Self where T: Bytes {
+		let data_size = data_of_buffers
+			.iter()
+			.fold(0, |size, data_of_buffer| size + data_of_buffer.to_ref_bytes().len()) as _;
 
-		let data_size = buffer_data.len() as vk::DeviceSize;
-
-		let empty_buffer = unsafe {
+		let mut empty_buffer = unsafe {
 			Self::empty(
 				physical_device,
 				device,
@@ -151,37 +145,49 @@ impl BuffersWithMemory {
 			let access_to_memory = device
 				.map_memory(empty_buffer.memory, 0, data_size, vk::MemoryMapFlags::empty())
 				.unwrap() as *mut u8;
-			access_to_memory.copy_from(buffer_data.as_ptr(), buffer_data.len());
-			device.unmap_memory(empty_buffer.memory);
+			data_of_buffers
+				.into_iter()
+				.fold(access_to_memory, |mem_addr, data_of_buffer| {
+					let ref_bytes = data_of_buffer.to_ref_bytes();
+					empty_buffer.offsets
+						.push(empty_buffer.offsets.last().unwrap_or(&0) + ref_bytes.len() as u64);
+					mem_addr.copy_from(ref_bytes.as_ptr(), ref_bytes.len());
+					(mem_addr as usize + ref_bytes.len()) as *mut u8
+				});
 		}
 
 		empty_buffer
 	}
 
-	pub fn device_local(
+	pub fn device_local<T>(
 		physical_device: &PhysicalDevice,
 		device: &Device,
-		data_infos: Vec<BufferDataInfo>,
+		data_of_buffers: Vec<T>,
 		buffer_usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
 		command_buffer: vk::CommandBuffer,
-	) -> (Self, Self) {
-		let size = data_infos
+	) -> (Self, Self) where T: Bytes {
+		// TODO: calculate size of buffer twice. one is below and the other is BuffersWithMemory::visible_coherent()
+		let (size, offsets) = data_of_buffers
 			.iter()
-			.fold(0, |offset, data_info| {
-				offset + data_info.byte_data.len() as vk::DeviceSize
-			});
+			.fold(
+				(0, Vec::new()),
+				|(offset, mut offsets), data_of_buffer| {
+					offsets.push(offset);
+					(offset + data_of_buffer.to_ref_bytes().len() as u64, offsets)
+				}
+			);
 
 		let staging_buffer = BuffersWithMemory::visible_coherent(
 			physical_device,
 			device,
-			data_infos,
+			data_of_buffers,
 			vk::BufferUsageFlags::TRANSFER_SRC,
 			sharing_mode,
 			vk::MemoryPropertyFlags::empty(),
 		);
 
-		let device_local_buffer = unsafe {
+		let mut device_local_buffer = unsafe {
 			BuffersWithMemory::empty(
 				physical_device,
 				device,
@@ -191,6 +197,7 @@ impl BuffersWithMemory {
 				vk::MemoryPropertyFlags::DEVICE_LOCAL,
 			)
 		};
+		device_local_buffer.offsets = offsets;
 
 		// transfer data to device local buffer from staging buffer.
 		unsafe {
@@ -211,12 +218,16 @@ impl BuffersWithMemory {
 		(device_local_buffer, staging_buffer)
 	}
 
-	pub fn buffer(&self) -> vk::Buffer {
+	pub fn raw_handle(&self) -> vk::Buffer {
 		self.buffer
 	}
 
 	pub fn memory(&self) -> vk::DeviceMemory {
 		self.memory
+	}
+
+	pub fn offsets(&self) -> &Vec<vk::DeviceSize> {
+		&self.offsets
 	}
 }
 
@@ -251,10 +262,20 @@ impl BufferDataInfo {
 	}
 }
 
+impl Bytes for BufferDataInfo {
+	fn into_bytes(self) -> Vec<u8> {
+		self.byte_data
+	}
+
+	fn to_ref_bytes(&self) -> &Vec<u8> {
+		&self.byte_data
+	}
+}
+
 
 impl Image {
 	/// vk::ImageView is null handle.
-	pub unsafe fn new(
+	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
 		device: &Device,
 		extent: vk::Extent3D,
@@ -263,7 +284,10 @@ impl Image {
 		sharing_mode: vk::SharingMode,
 		initial_layout: vk::ImageLayout,
 		sample_count: vk::SampleCountFlags,
-		subresource_range: vk::ImageSubresourceRange,
+		aspect_mask: vk::ImageAspectFlags,
+		mip_levels: u32,
+		array_layers: u32,
+		image_type: vk::ImageType,
 	) -> Self {
 		let image = device
 			.create_image(
@@ -279,8 +303,8 @@ impl Image {
 					samples: sample_count,
 					tiling: vk::ImageTiling::OPTIMAL,
 					image_type,
-					mip_levels: subresource_range.level_count,
-					array_layers: subresource_range.layer_count,
+					mip_levels,
+					array_layers,
 					queue_family_index_count: 1,
 					p_queue_family_indices: &physical_device.queue_family_idx as *const _,
 				},
@@ -293,23 +317,149 @@ impl Image {
 			view: vk::ImageView::null(),
 			extent,
 			format,
-			layout: initial_layout,
-			subresource_range,
-			offset: 0,
-			size: 0,
+			layout: vec![initial_layout; mip_levels as usize],
+			aspect_mask,
+			mip_levels,
+			array_layers,
 		}
 	}
 
+	/// This Image must have been bound to memory.
+	pub fn attach_image_view(
+		&mut self,
+		device: &Device,
+		view_type: vk::ImageViewType,
+		component_mapping: vk::ComponentMapping,
+	) {
+		unsafe {
+			debug_assert_ne!(self.view, vk::ImageView::null());
+			let image_view = device
+				.create_image_view(
+					&vk::ImageViewCreateInfo {
+						s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::ImageViewCreateFlags::empty(),
+						image: self.raw_handle,
+						format: self.format,
+						subresource_range: vk::ImageSubresourceRange {
+							aspect_mask: self.aspect_mask,
+							base_mip_level: 0,
+							level_count: self.mip_levels,
+							base_array_layer: 0,
+							layer_count: self.array_layers,
+						},
+						view_type,
+						components: component_mapping,
+					},
+					None,
+				)
+				.unwrap();
+
+			self.view = image_view;
+		}
+	}
+
+	/// Must be bound to memory.
+	/// Image layout will be updated but actual layout is not updated yet.
+	pub fn attach_barriers(
+		&mut self,
+		device: &Device,
+		&command_buffer: &vk::CommandBuffer,
+		mip_level_range: Range<u32>,
+		new_layout: vk::ImageLayout,
+		pipeline_barriers: (vk::PipelineStageFlags, vk::PipelineStageFlags),
+		access_masks: (vk::AccessFlags, vk::AccessFlags),
+	) {
+		debug_assert!(mip_level_range.end <= self.mip_levels);
+		let mip_level_range_idx = mip_level_range.start as usize..mip_level_range.end as usize;
+		let old_layout = self.layout[mip_level_range_idx.start];
+		self.layout[mip_level_range_idx]
+			.iter_mut()
+			.for_each(|layout| {
+				debug_assert_eq!(old_layout, *layout);
+				*layout = new_layout;
+			});
+
+		unsafe {
+			device.cmd_pipeline_barrier(
+				command_buffer,
+				pipeline_barriers.0,
+				pipeline_barriers.1,
+				vk::DependencyFlags::BY_REGION,
+				&[],
+				&[],
+				&[
+					vk::ImageMemoryBarrier {
+						s_type: StructureType::IMAGE_MEMORY_BARRIER,
+						p_next: ptr::null(),
+						image: self.raw_handle,
+						old_layout,
+						new_layout,
+						src_access_mask: access_masks.0,
+						dst_access_mask: access_masks.1,
+						src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+						dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+						subresource_range: vk::ImageSubresourceRange {
+							aspect_mask: self.aspect_mask,
+							base_array_layer: 0,
+							layer_count: self.array_layers,
+							base_mip_level: mip_level_range.start,
+							level_count: mip_level_range.end - mip_level_range.start,
+						}
+					}
+				],
+			)
+		}
+	}
+
+	#[inline]
 	pub fn raw_handle(&self) -> vk::Image {
 		self.raw_handle
 	}
 
+	#[inline]
 	pub fn view(&self) -> vk::ImageView {
 		self.view
 	}
 
-	pub fn layout(&self) -> vk::ImageLayout {
-		self.layout
+	#[inline]
+	pub fn layout(&self, mip_level: u32) -> vk::ImageLayout {
+		debug_assert!(mip_level <= self.mip_levels);
+		self.layout[mip_level as usize]
+	}
+
+	#[inline]
+	pub fn extent(&self, mip_level: u32) -> vk::Extent3D {
+		debug_assert!(mip_level <= self.mip_levels);
+		let divider = 2_u32.pow(mip_level);
+		vk::Extent3D {
+			width: self.extent.width / divider,
+			height: self.extent.height / divider,
+			depth: self.extent.depth,
+		}
+	}
+
+	#[inline]
+	pub fn aspect_mask(&self) -> vk::ImageAspectFlags {
+		self.aspect_mask
+	}
+
+	#[inline]
+	pub fn mip_levels(&self) -> u32 {
+		self.mip_levels
+	}
+
+	#[inline]
+	pub fn array_layers(&self) -> u32 {
+		self.array_layers
+	}
+
+	pub fn maximum_mip_level(width: u32, height: u32) -> u32 {
+		[width, height]
+			.iter()
+			.map(|&num| (num as f32).log2() as u32)
+			.min()
+			.unwrap_or(1)
 	}
 }
 
@@ -322,46 +472,26 @@ impl VkDestroy for Image {
 	}
 }
 
-impl ImageDataInfo {
-	pub unsafe fn new_uninit(bytes: Vec<u8>, width: u32, height: u32) -> Self {
-		Self {
-			bytes,
-			width,
-			height,
-		}
-	}
-
-	pub fn new(path: &'static str) -> Self {
-		let image = image_crate::open(path).unwrap().to_rgba();
-		let (width, height) = image.dimensions();
-		let bytes = image.into_raw();
-
-		Self {
-			bytes,
-			width,
-			height,
-		}
-	}
-}
-
 impl ImagesWithMemory {
-	pub unsafe fn new(
+	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
 		device: &Device,
 		mut images: Vec<Image>,
 		memory_properties: vk::MemoryPropertyFlags,
 	) -> Self {
-		let (allocation_size, required_memory_type) = images
-			.iter_mut()
+		let memory_requirements: Vec<_> = images
+			.iter()
+			.map(|image| {
+				device.get_image_memory_requirements(image.raw_handle)
+			})
+			.collect();
+
+		let (allocation_size, required_memory_type) = memory_requirements
+			.iter()
 			.fold(
 				(0, 0),
-				|(allocation_size, required_memory_type), image| {
-					let requirements = device.get_image_memory_requirements(image.raw_handle);
-					image.size = requirements.size;
-					(
-						allocation_size + requirements.size,
-						required_memory_type | requirements.memory_type_bits
-					)
+				|(alloc_size, mem_ty), requirement| {
+					(alloc_size + requirement.size, mem_ty | requirement.memory_type_bits)
 				}
 			);
 
@@ -383,10 +513,10 @@ impl ImagesWithMemory {
 
 		images
 			.iter_mut()
-			.fold(0, |offset, image| {
+			.zip(memory_requirements.into_iter())
+			.fold(0, |offset, (image, mem_req)| {
 				device.bind_image_memory(image.raw_handle(), memory, offset).unwrap();
-				image.offset = offset;
-				offset + image.size
+				offset + mem_req.size
 			});
 
 		Self {
@@ -395,128 +525,7 @@ impl ImagesWithMemory {
 		}
 	}
 
-	pub unsafe fn attach_image_views(
-		&mut self,
-		device: &Device,
-		view_type: Vec<vk::ImageViewType>,
-	) {
-		debug_assert_eq!(self.images.len(), view_type.len());
-
-		self.images
-			.iter_mut()
-			.zip(view_type.into_iter())
-			.for_each(|(image, view_type)| {
-				image.view = device
-					.create_image_view(
-						&vk::ImageViewCreateInfo {
-							s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
-							p_next: ptr::null(),
-							flags: vk::ImageViewCreateFlags::empty(),
-							image: image.raw_handle,
-							format: image.format,
-							components: vk::ComponentMapping {
-								r: vk::ComponentSwizzle::IDENTITY,
-								g: vk::ComponentSwizzle::IDENTITY,
-								b: vk::ComponentSwizzle::IDENTITY,
-								a: vk::ComponentSwizzle::IDENTITY,
-							},
-							subresource_range: image.subresource_range,
-							view_type,
-						},
-						None,
-					)
-					.unwrap();
-			});
-	}
-
-	pub fn attach_barriers(
-		&mut self,
-		device: &Device,
-		idx: usize,
-		new_layout: vk::ImageLayout,
-		pipeline_barriers: (vk::PipelineStageFlags, vk::PipelineStageFlags),
-		access_masks: (vk::AccessFlags, vk::AccessFlags),
-		command_buffer: vk::CommandBuffer,
-	) {
-		unsafe {
-			device
-				.cmd_pipeline_barrier(
-					command_buffer,
-					pipeline_barriers.0,
-					pipeline_barriers.1,
-					vk::DependencyFlags::BY_REGION,
-					&[],
-					&[],
-					&[
-						vk::ImageMemoryBarrier {
-							s_type: StructureType::IMAGE_MEMORY_BARRIER,
-							p_next: ptr::null(),
-							image: self.get(idx).raw_handle,
-							old_layout: self.get(idx).layout,
-							new_layout,
-							src_access_mask: access_masks.0,
-							dst_access_mask: access_masks.1,
-							src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-							dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-							subresource_range: self.get(idx).subresource_range,
-						}
-					],
-				);
-
-			self.images[idx].layout = new_layout;
-		}
-	}
-
-	pub fn attach_barriers_all(
-		&mut self,
-		device: &Device,
-		new_layout: vk::ImageLayout,
-		pipeline_barriers: (vk::PipelineStageFlags, vk::PipelineStageFlags),
-		access_masks: (vk::AccessFlags, vk::AccessFlags),
-		command_buffer: vk::CommandBuffer,
-	) {
-		let image_barriers: Vec<_> = self.images
-			.iter_mut()
-			.map(|mut image| {
-				let image_barrier = vk::ImageMemoryBarrier {
-					s_type: StructureType::IMAGE_MEMORY_BARRIER,
-					p_next: ptr::null(),
-					image: image.raw_handle,
-					old_layout: image.layout,
-					new_layout,
-					src_access_mask: access_masks.0,
-					dst_access_mask: access_masks.1,
-					src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-					dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-					subresource_range: image.subresource_range,
-				};
-				image.layout = new_layout;
-
-				image_barrier
-			})
-			.collect();
-
-		unsafe {
-			device.cmd_pipeline_barrier(
-				command_buffer,
-				pipeline_barriers.0,
-				pipeline_barriers.1,
-				vk::DependencyFlags::BY_REGION,
-				&[],
-				&[],
-				&image_barriers[..],
-			)
-		}
-	}
-
-	pub fn init_data(
-		&self,
-		image_data_infos: Vec<ImageDataInfo>,
-		command_recorder: CommandRecorder<Natural>,
-	) -> (CommandRecorder<Natural>, BuffersWithMemory) {
-		unimplemented!()
-	}
-
+	#[deprecated]
 	pub fn textures(
 		physical_device: &PhysicalDevice,
 		device: &Device,
@@ -540,7 +549,7 @@ impl ImagesWithMemory {
 					let mut image_data = image.into_raw();
 
 					let image = unsafe {
-						Image::new(
+						Image::uninitialized(
 							physical_device,
 							device,
 							vk::Extent3D {
@@ -553,13 +562,10 @@ impl ImagesWithMemory {
 							sharing_mode,
 							vk::ImageLayout::UNDEFINED,
 							vk::SampleCountFlags::TYPE_1,
-							vk::ImageSubresourceRange {
-								aspect_mask: vk::ImageAspectFlags::COLOR,
-								layer_count: 1,
-								base_array_layer: 0,
-								level_count: 1,
-								base_mip_level: 0,
-							},
+							vk::ImageAspectFlags::COLOR,
+							1,
+							1,
+							vk::ImageType::TYPE_2D,
 						)
 					};
 
@@ -582,7 +588,7 @@ impl ImagesWithMemory {
 		);
 
 		let mut textures = unsafe {
-			ImagesWithMemory::new(
+			ImagesWithMemory::uninitialized(
 				physical_device,
 				device,
 				images,
@@ -590,69 +596,29 @@ impl ImagesWithMemory {
 			)
 		};
 
-		unsafe {
-			textures.attach_image_views(
-				device,
-				vec![vk::ImageViewType::TYPE_2D; textures.images.len()]
-			);
-
-			textures.attach_barriers_all(
-				device,
-				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-				(vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER),
-				(vk::AccessFlags::empty(), vk::AccessFlags::TRANSFER_WRITE),
-				command_buffer,
-			);
-
-			textures.images
-				.iter()
-				.zip(offsets.into_iter())
-				.for_each(|(image, offset)| {
-					device.cmd_copy_buffer_to_image(
-						command_buffer,
-						staging_buffer.buffer,
-						image.raw_handle,
-						image.layout,
-						&[
-							vk::BufferImageCopy {
-								buffer_offset: offset,
-								buffer_row_length: 0, // represents no padding bytes
-								buffer_image_height: 0, // represents no padding bytes
-								image_offset: vk::Offset3D {
-									x: 0,
-									y: 0,
-									z: 0,
-								},
-								image_extent: image.extent,
-								image_subresource: vk::ImageSubresourceLayers {
-									aspect_mask: vk::ImageAspectFlags::COLOR,
-									mip_level: 0,
-									layer_count: 1,
-									base_array_layer: 0,
-								}
-							}
-						],
-					)
-				});
-
-			textures.attach_barriers_all(
-				device,
-				vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-				(
-					vk::PipelineStageFlags::TRANSFER,
-					vk::PipelineStageFlags::FRAGMENT_SHADER,
-				),
-				(vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ),
-				command_buffer,
-			)
-		}
-
 		(textures, staging_buffer)
 	}
 
 	#[inline]
 	pub fn get(&self, idx: usize) -> &Image {
 		&self.images[idx]
+	}
+
+	pub fn iter<'a>(&self) -> ImagesIter<'a> {
+		ImagesIter {
+			ptr: &self.images[0] as *const _,
+			end: self.images.last().unwrap_or(&self.images[0]) as *const _,
+			_marker: PhantomData::<&'a Self>,
+		}
+	}
+
+	pub fn iter_mut(&mut self) -> ImagesIterMut {
+		let ptr = &mut self.images[0] as *mut _;
+		ImagesIterMut {
+			ptr,
+			end: self.images.last_mut().map(|mut_ref| mut_ref as *mut _).unwrap_or(ptr),
+			_marker: PhantomData::<&mut Self>,
+		}
 	}
 }
 
@@ -669,93 +635,44 @@ impl VkDestroy for ImagesWithMemory {
 	}
 }
 
-impl<'a> ImagesWithMemoryBuilder<'a> {
-	pub fn start(physical_device: &'a PhysicalDevice, device: &'a Device) -> Self {
-		Self {
-			physical_device,
-			device,
-			image_infos: Vec::new(),
+impl Index<usize> for ImagesWithMemory {
+	type Output = Image;
+	fn index(&self, index: usize) -> &Self::Output {
+		&self.images[index]
+	}
+}
+
+impl IndexMut<usize> for ImagesWithMemory {
+	fn index_mut(&mut self, index: usize) -> &mut Image {
+		&mut self.images[index]
+	}
+}
+
+impl<'a> Iterator for ImagesIter<'a> {
+	type Item = &'a Image;
+	fn next(&mut self) -> Option<Self::Item> {
+		unsafe {
+			if self.ptr == self.end {
+				None
+			} else {
+				self.ptr = (self.ptr as usize + mem::size_of::<Self::Item>()) as *const _;
+				self.ptr.as_ref()
+			}
 		}
 	}
 }
 
-impl ImagesWithMemoryBuilder<'_> {
-	pub fn next(
-		mut self,
-		image_data_info: ImageDataInfo,
-		format: vk::Format,
-		usage: vk::ImageUsageFlags,
-		sharing_mode: vk::SharingMode,
-		initial_layout: vk::ImageLayout,
-		sample_count: vk::SampleCountFlags,
-		subresource_range: vk::ImageSubresourceRange,
-		image_type: vk::ImageType,
-		view_type: vk::ImageViewType,
-	) -> Self {
-		self.image_infos.push(
-			ImageInfo {
-				image: unsafe {
-					Image::new(
-						self.physical_device,
-						self.device,
-						vk::Extent3D {
-							width: image_data_info.width,
-							height: image_data_info.height,
-							depth: 1,
-						},
-						format,
-						usage,
-						sharing_mode,
-						initial_layout,
-						sample_count,
-						subresource_range,
-					)
-				},
-				usage,
-				sharing_mode,
-				image_type,
-				view_type,
-				bytes: image_data_info.bytes,
+impl<'a> Iterator for ImagesIterMut<'a> {
+	type Item = &'a mut Image;
+	fn next(&mut self) -> Option<Self::Item> {
+		unsafe {
+			if self.ptr == self.end {
+				None
+			} else {
+				self.ptr = (self.ptr as usize + mem::size_of::<Self::Item>()) as *mut _;
+				self.ptr.as_mut()
 			}
-		);
-
-		self
-	}
-
-	pub fn next_same_settings(mut self, image_data_info: ImageDataInfo) -> Self {
-		let pre_image_info = self.image_infos.last().unwrap();
-		self.image_infos.push(
-			ImageInfo {
-				image: unsafe {
-					Image::new(
-						self.physical_device,
-						self.device,
-						vk::Extent3D {
-							width: image_data_info.width,
-							height: image_data_info.height,
-							depth: 1,
-						},
-						pre_image_info.image.format,
-						pre_image_info.usage,
-						pre_image_info.sharing_mode,
-						pre_image_info.image.layout,
-						pre_image_info.image.sample_count,
-						pre_image_info.image.subresource_range,
-					)
-				},
-				usage: pre_image_info.usage,
-				sharing_mode: pre_image_info.sharing_mode,
-				image_type: pre_image_info.image_type,
-				view_type: pre_image_info.view_type,
-				bytes: image_data_info.bytes,
-			}
-		);
-
-		self
-	}
-
-	pub fn build(self, memory_properties: vk::MemoryPropertyFlags) -> ImagesWithMemory {
-		unimplemented!()
+		}
 	}
 }
 
@@ -858,7 +775,6 @@ impl ResourceLoader<'_> {
 		self
 	}
 
-	// TODO: generic or shader specific and create descriptor sets at the same time.
 	pub fn image_for_texture(
 		mut self,
 		pathes: Vec<&'static str>,

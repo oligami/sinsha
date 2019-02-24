@@ -147,7 +147,7 @@ impl GuiDraw for Rect2Ds {
 			device.cmd_bind_vertex_buffers(
 				command_buffer[image_index],
 				0,
-				&[self.vertex_buffers.buffer()],
+				&[self.vertex_buffers.raw_handle()],
 				&[0],
 			);
 
@@ -238,18 +238,16 @@ impl Rect2Ds {
 				}
 			);
 
-		let command_recorder = vulkan
+		let mut command_recorder = vulkan
 			.command_recorder()
-			.begin_recording()
-			.transfer(
-				&staging_buffers,
-				&self.vertex_buffers,
-				&region_infos[..],
-			)
-			.end_recording();
+			.begin_recording();
+
+		command_recorder.transfer(&staging_buffers, &self.vertex_buffers, &region_infos[..]);
+
+		let command_recorded = command_recorder.end_recording();
 
 		vulkan.submit_command_recorder(
-			&command_recorder,
+			&command_recorded,
 			vk::PipelineStageFlags::empty(),
 			&[],
 			&[],
@@ -258,7 +256,7 @@ impl Rect2Ds {
 
 		vulkan.queue_wait_idle();
 		vulkan.destroy(staging_buffers);
-		vulkan.destroy(command_recorder);
+		vulkan.destroy(command_recorded);
 	}
 }
 
@@ -431,7 +429,7 @@ impl Rect2DsBuilder {
 			.map(|builder| {
 				let image = textures.get(builder.image_idx);
 				vk::DescriptorImageInfo {
-					image_layout: image.layout(),
+					image_layout: image.layout(0),
 					image_view: image.view(),
 					sampler: builder.sampler,
 				}

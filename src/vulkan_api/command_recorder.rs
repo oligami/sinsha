@@ -10,6 +10,7 @@ use std::ptr;
 use std::marker::PhantomData;
 
 pub struct CommandRecorder<'a, T> {
+	physical_device: &'a PhysicalDevice,
 	device: &'a Device,
 	queue: &'a vk::Queue,
 	command_buffer: vk::CommandBuffer,
@@ -38,6 +39,7 @@ pub struct End;
 impl<'a, T> CommandRecorder<'a, T> {
 	fn transit_into<U>(self) -> CommandRecorder<'a, U> {
 		CommandRecorder {
+			physical_device: self.physical_device,
 			device: self.device,
 			queue: self.queue,
 			command_pool: self.command_pool,
@@ -49,7 +51,7 @@ impl<'a, T> CommandRecorder<'a, T> {
 
 impl<'a> CommandRecorder<'a, Uninitialized> {
 	pub(in crate::vulkan_api) fn new(
-		physical_device: &PhysicalDevice,
+		physical_device: &'a PhysicalDevice,
 		device: &'a Device,
 		queue: &'a vk::Queue,
 	) -> Self {
@@ -79,6 +81,7 @@ impl<'a> CommandRecorder<'a, Uninitialized> {
 				.unwrap()[0];
 
 			Self {
+				physical_device,
 				device,
 				queue,
 				command_pool,
@@ -111,21 +114,224 @@ impl<'a> CommandRecorder<'a, Uninitialized> {
 
 impl<'a> CommandRecorder<'a, Natural> {
 	pub fn transfer(
-		self,
+		&self,
 		src_buffer: &BuffersWithMemory,
 		dst_buffer: &BuffersWithMemory,
 		region_infos: &[vk::BufferCopy],
-	) -> Self {
+	) {
 		unsafe {
 			self.device.cmd_copy_buffer(
 				self.command_buffer,
-				src_buffer.buffer(),
-				dst_buffer.buffer(),
+				src_buffer.raw_handle(),
+				dst_buffer.raw_handle(),
 				region_infos,
 			);
 		}
+	}
 
-		self
+	pub fn buffer_to_image(
+		&self,
+		src_buffer: &BuffersWithMemory,
+		dst_image: &Image,
+		region_infos: &[vk::BufferImageCopy],
+	) {
+		unsafe {
+			self.device.cmd_copy_buffer_to_image(
+				self.command_buffer,
+				src_buffer.raw_handle(),
+				dst_image.raw_handle(),
+				dst_image.layout(region_infos[0].image_subresource.mip_level),
+				region_infos,
+			);
+		}
+	}
+
+	pub fn load_textures<'b>(
+		&self,
+		pathes: &[&'b str],
+		mip_enable: &[bool],
+	) -> (ImagesWithMemory, BuffersWithMemory) {
+		debug_assert_eq!(pathes.len(), mip_enable.len());
+
+		let (data_of_images, images): (Vec<_>, Vec<_>) = pathes
+			.iter()
+			.zip(mip_enable.iter())
+			.map(|(path, &mip_enable)| {
+				let image = image_crate::open(path).unwrap().to_rgba();
+				let (width, height) = image.dimensions();
+				let data = image.into_raw();
+
+				let (image_usage, mip_levels) = if mip_enable {
+					(
+						vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::TRANSFER_SRC
+							| vk::ImageUsageFlags::SAMPLED,
+						Image::maximum_mip_level(width, height),
+					)
+				} else {
+					(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED, 1)
+				};
+
+				let image = unsafe {
+					Image::uninitialized(
+						self.physical_device,
+						self.device,
+						vk::Extent3D {
+							width,
+							height,
+							depth: 1,
+						},
+						vk::Format::R8G8B8A8_UNORM,
+						image_usage,
+						vk::SharingMode::EXCLUSIVE,
+						vk::ImageLayout::UNDEFINED,
+						vk::SampleCountFlags::TYPE_1,
+						vk::ImageAspectFlags::COLOR,
+						mip_levels,
+						1,
+						vk::ImageType::TYPE_2D,
+					)
+				};
+
+				(BufferDataInfo::new(data), image)
+			})
+			.unzip();
+
+		let staging_buffers = BuffersWithMemory::visible_coherent(
+			self.physical_device,
+			self.device,
+			data_of_images,
+			vk::BufferUsageFlags::TRANSFER_SRC,
+			vk::SharingMode::EXCLUSIVE,
+			vk::MemoryPropertyFlags::empty(),
+		);
+
+		let mut images_with_memory = unsafe {
+			ImagesWithMemory::uninitialized(
+				self.physical_device,
+				self.device,
+				images,
+				vk::MemoryPropertyFlags::DEVICE_LOCAL,
+			)
+		};
+
+		images_with_memory
+			.iter_mut()
+			.for_each(|image| {
+				image.attach_image_view(
+					self.device,
+					vk::ImageViewType::TYPE_2D,
+					vk::ComponentMapping {
+						r: vk::ComponentSwizzle::IDENTITY,
+						g: vk::ComponentSwizzle::IDENTITY,
+						b: vk::ComponentSwizzle::IDENTITY,
+						a: vk::ComponentSwizzle::IDENTITY,
+					},
+				);
+
+				image.attach_barriers(
+					self.device,
+					&self.command_buffer,
+					0..image.mip_levels(),
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					(vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER),
+					(vk::AccessFlags::empty(), vk::AccessFlags::TRANSFER_WRITE),
+				);
+			});
+
+		images_with_memory
+			.iter()
+			.zip(staging_buffers.offsets().iter())
+			.for_each(|(image, &buffer_offset)| {
+				self.buffer_to_image(
+					&staging_buffers,
+					image,
+					&[vk::BufferImageCopy {
+						buffer_offset,
+						buffer_row_length: 0,
+						buffer_image_height: 0,
+						image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+						image_extent: image.extent(0),
+						image_subresource: vk::ImageSubresourceLayers {
+							aspect_mask: image.aspect_mask(),
+							base_array_layer: 0,
+							layer_count: image.array_layers(),
+							mip_level: image.mip_levels(),
+						},
+					}],
+				)
+			});
+
+		mip_enable
+			.iter()
+			.zip(images_with_memory.iter_mut())
+			.take_while(|(mip_enable, image)| **mip_enable)
+			.for_each(|(_mip_enable, image)| {
+				unsafe {
+					let base_extent = image.extent(0);
+					let mut mip_width = base_extent.width as i32;
+					let mut mip_height = base_extent.height as i32;
+
+					for dst_mip_level in 1..image.mip_levels() {
+						let src_mip_level = dst_mip_level - 1;
+
+						image.attach_barriers(
+							self.device,
+							&self.command_buffer,
+							(src_mip_level..dst_mip_level),
+							vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+							(vk::PipelineStageFlags::empty(), vk::PipelineStageFlags::empty()),
+							(vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::TRANSFER_READ),
+						);
+
+						self.device.cmd_blit_image(
+							self.command_buffer,
+							image.raw_handle(),
+							vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+							image.raw_handle(),
+							vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+							&[vk::ImageBlit {
+								src_offsets: [
+									vk::Offset3D { x: 0, y: 0, z: 0 },
+									vk::Offset3D { x: mip_width, y: mip_height, z: 1 },
+								],
+								src_subresource: vk::ImageSubresourceLayers {
+									aspect_mask: image.aspect_mask(),
+									base_array_layer: 0,
+									layer_count: image.array_layers(),
+									mip_level: src_mip_level,
+								},
+								dst_offsets: [
+									vk::Offset3D { x: 0, y: 0, z: 0 },
+									vk::Offset3D { x: mip_width / 2, y: mip_height / 2, z: 1 },
+								],
+								dst_subresource: vk::ImageSubresourceLayers {
+									aspect_mask: image.aspect_mask(),
+									base_array_layer: 0,
+									layer_count: image.array_layers(),
+									mip_level: dst_mip_level,
+								}
+							}],
+							vk::Filter::LINEAR,
+						);
+					}
+				}
+			});
+
+		images_with_memory
+			.iter_mut()
+			.for_each(|image| {
+				let mip_levels = image.mip_levels();
+				image.attach_barriers(
+					self.device,
+					&self.command_buffer,
+					0..mip_levels,
+					vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+					(vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER),
+					(vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::SHADER_READ),
+				)
+			});
+
+		(images_with_memory, staging_buffers)
 	}
 }
 
@@ -173,7 +379,7 @@ impl<'a> CommandRecorder<'a, End> {
 	}
 }
 
-impl<T> VkDestroy for CommandRecorder<'_, T> {
+impl VkDestroy for CommandRecorder<'_, End> {
 	fn destroy(self, device: &Device) {
 		unsafe {
 			device.destroy_command_pool(self.command_pool, None);
