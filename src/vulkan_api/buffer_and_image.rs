@@ -16,6 +16,7 @@ use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
 use std::error::Error;
 
+#[deprecated]
 pub trait Bytes {
 	fn into_bytes(self) -> Vec<u8>;
 	fn to_ref_bytes(&self) -> &Vec<u8>;
@@ -67,16 +68,13 @@ pub struct ImagesWithMemory<'device> {
 	memory: vk::DeviceMemory,
 }
 
-pub struct ImagesIter<'device, 'item> {
-	ptr: *const Image,
-	end: *const Image,
-	_marker: PhantomData<&'item ImagesWithMemory<'device>>,
-}
-
-pub struct ImagesIterMut<'device, 'item> {
-	ptr: *mut Image,
-	end: *mut Image,
-	_marker: PhantomData<&'item mut ImagesWithMemory<'device>>,
+pub struct Memory<'device, T> where T: RwMarker {
+	device: &'device Device,
+	raw_handle: vk::DeviceMemory,
+	buffer: vk::Buffer,
+	buffer_size: vk::DeviceSize,
+	images: Vec<Image>,
+	_marker: PhantomData<T>,
 }
 
 #[derive(Debug)]
@@ -634,22 +632,14 @@ impl<'device> ImagesWithMemory<'device> {
 		&self.images[idx]
 	}
 
-	pub fn iter<'item>(&self) -> ImagesIter<'device, 'item> {
-		ImagesIter {
-			ptr: &self.images[0] as *const _,
-			end: self.images.last().unwrap_or(&self.images[0]) as *const _,
-			_marker: PhantomData::<&Self>,
-		}
+	pub fn iter(&self) -> slice::Iter<Image> {
+		self.images.iter()
 	}
 
-	pub fn iter_mut<'item>(&mut self) -> ImagesIterMut<'device, 'item> {
-		let ptr = &mut self.images[0] as *mut _;
-		ImagesIterMut {
-			ptr,
-			end: self.images.last_mut().map(|mut_ref| mut_ref as *mut _).unwrap_or(ptr),
-			_marker: PhantomData::<&mut Self>,
-		}
+	pub fn iter_mut(&mut self) -> slice::IterMut<Image> {
+		self.images.iter_mut()
 	}
+
 }
 
 impl<'device> Index<usize> for ImagesWithMemory<'device> {
@@ -665,33 +655,6 @@ impl<'device> IndexMut<usize> for ImagesWithMemory<'device> {
 	}
 }
 
-impl<'device, 'item> Iterator for ImagesIter<'device, 'item> {
-	type Item = &'item Image;
-	fn next(&mut self) -> Option<Self::Item> {
-		unsafe {
-			if self.ptr == self.end {
-				None
-			} else {
-				self.ptr = (self.ptr as usize + mem::size_of::<Self::Item>()) as *const _;
-				self.ptr.as_ref()
-			}
-		}
-	}
-}
-
-impl<'device, 'item> Iterator for ImagesIterMut<'device, 'item> {
-	type Item = &'item mut Image;
-	fn next(&mut self) -> Option<Self::Item> {
-		unsafe {
-			if self.ptr == self.end {
-				None
-			} else {
-				self.ptr = (self.ptr as usize + mem::size_of::<Self::Item>()) as *mut _;
-				self.ptr.as_mut()
-			}
-		}
-	}
-}
 
 #[inline]
 unsafe fn create_buffer(
