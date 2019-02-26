@@ -17,10 +17,10 @@ impl Button {
 		Self { tag, key_binding }
 	}
 
-	pub fn behavior<F>(
+	pub fn behavior<T, F>(
 		&self,
 		interaction_devices: &InteractionDevices,
-		rect2ds: &mut Rect2Ds,
+		rect2ds: &mut Rect2Ds<T>,
 		mut subroutine: F,
 	) where F: FnMut() {
 		match interaction_devices.keyboard.get(&self.key_binding) {

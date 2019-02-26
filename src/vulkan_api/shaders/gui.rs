@@ -39,11 +39,11 @@ pub struct Extent2D<T> {
 	pub left: T,
 }
 
-pub struct Rect2Ds<'device> {
+pub struct Rect2Ds<'device, T> {
 	/// (usize: for vertex, descriptor set, and push constant, usize: for texture)
 	tag_and_idxs: HashMap<&'static str, (usize, usize)>,
 	positions: Vec<(Extent2D<f32>, Extent2D<i32>, XY)>,
-	vertex_buffers: BuffersWithMemory<'device>,
+	vertex_buffers: BufferWithMemory<'device, T>,
 	textures: ImagesWithMemory<'device>,
 	descriptor_sets: DescriptorSets,
 	push_constants: Vec<RGBA>,
@@ -132,7 +132,7 @@ pub const BOTTOM_LEFT: XY = XY::new(-1.0, 1.0);
 pub const BOTTOM_CENTER: XY = XY::new(0.0, 1.0);
 pub const BOTTOM_RIGHT: XY = XY::new(1.0, 1.0);
 
-impl<'device> GuiDraw for Rect2Ds<'device> {
+impl<'device, T> GuiDraw for Rect2Ds<'device, T> {
 	/// This function must be called,
 	/// after the command buffer has entered in the valid render pass and been bound gui pipeline.
 	/// The pipeline layout must be valid.
@@ -176,7 +176,7 @@ impl<'device> GuiDraw for Rect2Ds<'device> {
 	}
 }
 
-impl Rect2Ds<'_> {
+impl<T> Rect2Ds<'_, T> {
 	pub fn start_builder() -> Rect2DsBuilder {
 		Rect2DsBuilder::start()
 	}
@@ -213,7 +213,7 @@ impl Rect2Ds<'_> {
 			})
 			.collect();
 
-		let staging_buffers = BuffersWithMemory::visible_coherent(
+		let staging_buffers = BufferWithMemory::visible_coherent(
 			&vulkan.physical_device,
 			&vulkan.device,
 			data_infos,

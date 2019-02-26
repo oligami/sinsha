@@ -113,10 +113,10 @@ impl<'a, 'device> CommandRecorder<'a, 'device, Uninitialized> {
 }
 
 impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
-	pub fn transfer(
+	pub fn transfer<T>(
 		&self,
-		src_buffer: &BuffersWithMemory,
-		dst_buffer: &BuffersWithMemory,
+		src_buffer: &BufferWithMemory<T>,
+		dst_buffer: &BufferWithMemory<NonRw>,
 		region_infos: &[vk::BufferCopy],
 	) {
 		unsafe {
@@ -129,9 +129,9 @@ impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
 		}
 	}
 
-	pub fn buffer_to_image(
+	pub fn buffer_to_image<T>(
 		&self,
-		src_buffer: &BuffersWithMemory,
+		src_buffer: &BufferWithMemory<T>,
 		dst_image: &Image,
 		region_infos: &[vk::BufferImageCopy],
 	) {
@@ -146,11 +146,13 @@ impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
 		}
 	}
 
+	#[deprecated]
+	/// deprecated until impl data transfer.
 	pub fn load_textures<'b>(
 		&self,
 		pathes: &[&'b str],
 		mip_enable: &[bool],
-	) -> (ImagesWithMemory, BuffersWithMemory) {
+	) -> (ImagesWithMemory, BufferWithMemory<Rw>) {
 		debug_assert_eq!(pathes.len(), mip_enable.len());
 
 		let (data_of_images, images): (Vec<_>, Vec<_>) = pathes
@@ -196,7 +198,7 @@ impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
 			})
 			.unzip();
 
-		let staging_buffers = BuffersWithMemory::visible_coherent(
+		let staging_buffers = BufferWithMemory::visible_coherent(
 			self.physical_device,
 			self.device,
 			data_of_images,
@@ -238,28 +240,7 @@ impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
 				);
 			});
 
-		images_with_memory
-			.iter()
-			.zip(staging_buffers.offsets().iter())
-			.for_each(|(image, &buffer_offset)| {
-				self.buffer_to_image(
-					&staging_buffers,
-					image,
-					&[vk::BufferImageCopy {
-						buffer_offset,
-						buffer_row_length: 0,
-						buffer_image_height: 0,
-						image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
-						image_extent: image.extent(0),
-						image_subresource: vk::ImageSubresourceLayers {
-							aspect_mask: image.aspect_mask(),
-							base_array_layer: 0,
-							layer_count: image.array_layers(),
-							mip_level: image.mip_levels(),
-						},
-					}],
-				)
-			});
+		//TODO: transfer buffer to image
 
 		mip_enable
 			.iter()

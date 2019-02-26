@@ -7,21 +7,33 @@ use crate::vulkan_api::PhysicalDevice;
 use crate::vulkan_api::shaders::*;
 use crate::vulkan_api::command_recorder::CommandRecorder;
 
+use std::io;
+use std::fmt;
 use std::ptr;
 use std::mem;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
+use std::error::Error;
 
 pub trait Bytes {
 	fn into_bytes(self) -> Vec<u8>;
 	fn to_ref_bytes(&self) -> &Vec<u8>;
 }
 
-pub struct BuffersWithMemory<'device> {
+pub struct Rw;
+pub struct NonRw;
+
+pub struct BufferWithMemory<'device, T> {
 	device: &'device Device,
 	buffer: vk::Buffer,
 	memory: vk::DeviceMemory,
-	offsets: Vec<vk::DeviceSize>,
+	size: vk::DeviceSize,
+	_marker: PhantomData<T>,
+}
+
+pub struct BufferAccessor<'buffer, 'device> {
+	buffer_with_memory: &'buffer mut BufferWithMemory<'device, Rw>,
+	seeker: u64,
 }
 
 pub struct BufferDataInfo {
@@ -57,18 +69,22 @@ pub struct ImagesIterMut<'device, 'item> {
 	_marker: PhantomData<&'item mut ImagesWithMemory<'device>>,
 }
 
-pub struct Blit(vk::ImageBlit);
+#[derive(Debug)]
+pub enum MemoryTypeError {
+	NotFound,
+}
 
 
-impl<'device> BuffersWithMemory<'device> {
-	pub unsafe fn empty(
+/// Memory propertis contain HOST_VISIBLE and HOST_COHERENT.
+impl<'device> BufferWithMemory<'device, Rw> {
+	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
 		device: &'device Device,
 		data_size: vk::DeviceSize,
 		buffer_usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
 		memory_properties: vk::MemoryPropertyFlags,
-	) -> Self {
+	) -> Result<Self, Box<dyn Error>> {
 		let buffer = create_buffer(
 			physical_device,
 			device,
@@ -88,23 +104,35 @@ impl<'device> BuffersWithMemory<'device> {
 					memory_type_index: find_memory_type_index(
 						physical_device,
 						requirements.memory_type_bits,
-						memory_properties,
-					).unwrap(),
+						memory_properties
+							| vk::MemoryPropertyFlags::HOST_VISIBLE
+							| vk::MemoryPropertyFlags::HOST_COHERENT,
+					)?,
 				},
 				None,
-			)
-			.unwrap();
+			)?;
 
-		device.bind_buffer_memory(buffer, memory, 0).unwrap();
+		device.bind_buffer_memory(buffer, memory, 0)?;
 
-		Self {
-			device,
-			buffer,
-			memory,
-			offsets: Vec::new(),
+		Ok(
+			Self {
+				device,
+				buffer,
+				memory,
+				size: data_size,
+				_marker: PhantomData::<Rw>,
+			}
+		)
+	}
+
+	pub fn accessor(&mut self) -> BufferAccessor {
+		BufferAccessor {
+			buffer_with_memory: &mut self,
+			seeker: 0,
 		}
 	}
 
+	#[deprecated]
 	pub fn visible_coherent<T>(
 		physical_device: &PhysicalDevice,
 		device: &'device Device,
@@ -118,7 +146,7 @@ impl<'device> BuffersWithMemory<'device> {
 			.fold(0, |size, data_of_buffer| size + data_of_buffer.to_ref_bytes().len()) as _;
 
 		let mut empty_buffer = unsafe {
-			Self::empty(
+			Self::uninitialized(
 				physical_device,
 				device,
 				data_size,
@@ -130,24 +158,12 @@ impl<'device> BuffersWithMemory<'device> {
 			)
 		};
 
-		unsafe {
-			let access_to_memory = device
-				.map_memory(empty_buffer.memory, 0, data_size, vk::MemoryMapFlags::empty())
-				.unwrap() as *mut u8;
-			data_of_buffers
-				.into_iter()
-				.fold(access_to_memory, |mem_addr, data_of_buffer| {
-					let ref_bytes = data_of_buffer.to_ref_bytes();
-					empty_buffer.offsets
-						.push(empty_buffer.offsets.last().unwrap_or(&0) + ref_bytes.len() as u64);
-					mem_addr.copy_from(ref_bytes.as_ptr(), ref_bytes.len());
-					(mem_addr as usize + ref_bytes.len()) as *mut u8
-				});
-		}
+
 
 		empty_buffer
 	}
 
+	#[deprecated]
 	pub fn device_local<T>(
 		physical_device: &PhysicalDevice,
 		device: &'device Device,
@@ -167,7 +183,7 @@ impl<'device> BuffersWithMemory<'device> {
 				}
 			);
 
-		let staging_buffer = BuffersWithMemory::visible_coherent(
+		let staging_buffer = BufferWithMemory::visible_coherent(
 			physical_device,
 			device,
 			data_of_buffers,
@@ -177,7 +193,7 @@ impl<'device> BuffersWithMemory<'device> {
 		);
 
 		let mut device_local_buffer = unsafe {
-			BuffersWithMemory::empty(
+			BufferWithMemory::uninitialized(
 				physical_device,
 				device,
 				size,
@@ -186,7 +202,6 @@ impl<'device> BuffersWithMemory<'device> {
 				vk::MemoryPropertyFlags::DEVICE_LOCAL,
 			)
 		};
-		device_local_buffer.offsets = offsets;
 
 		// transfer data to device local buffer from staging buffer.
 		unsafe {
@@ -214,19 +229,60 @@ impl<'device> BuffersWithMemory<'device> {
 	pub fn memory(&self) -> vk::DeviceMemory {
 		self.memory
 	}
-
-	pub fn offsets(&self) -> &Vec<vk::DeviceSize> {
-		&self.offsets
-	}
 }
 
-impl Drop for BuffersWithMemory<'_> {
+impl<T> Drop for BufferWithMemory<'_, T> {
 	fn drop(&mut self) {
 		unsafe {
 			self.device.destroy_buffer(self.buffer, None);
 			self.device.free_memory(self.memory, None);
 		}
 	}
+}
+
+impl io::Read for BufferAccessor {
+	fn read(&self, buf: &mut [u8]) -> Result<usize> {
+
+	}
+}
+
+impl io::Seek for BufferAccessor {
+	fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+		match pos {
+			io::SeekFrom::Start(offset) => self.seeker = offset,
+			io::SeekFrom::Current(delta) => self.seeker += delta,
+			io::SeekFrom::End(delta) => {
+				self.seeker = (self.buffer_with_memory.size as i64 + delta) as u64;
+			},
+		}
+
+		Ok(self.seeker)
+	}
+}
+
+impl io::Write for BufferAccessor {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		unsafe {
+			let result_of_map_memory = self.buffer_with_memory.device
+				.map_memory(
+					self.buffer_with_memory.memory,
+					self.seeker,
+					buf.len() as _,
+					vk::MemoryMapFlags::empty(),
+				);
+			let access_to_memory = match result_of_map_memory {
+				Ok(ptr) => ptr as *mut u8,
+				Err(err) => return Err(io::Error::new(io::ErrorKind::Other, err)),
+			};
+
+			access_to_memory.copy_from(buf.as_ptr(), buf.len());
+
+			self.seeker += buf.len() as _;
+			Ok(buf.len())
+		}
+	}
+
+	fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
 
@@ -597,20 +653,32 @@ unsafe fn create_buffer(
 }
 
 
+impl fmt::Display for MemoryTypeError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			MemoryTypeError::NotFound => {
+				write!(f, "Not found suitable memory type index in physical device.")
+			},
+		}
+	}
+}
+impl Error for MemoryTypeError {}
+
+
 fn find_memory_type_index(
 	physical_device: &PhysicalDevice,
 	suitable_memory_type_bits: u32,
 	required_memory_property_flags: vk::MemoryPropertyFlags,
-) -> Option<u32> {
+) -> Result<u32, MemoryTypeError> {
 	for i in 0..physical_device.memory_properties.memory_type_count {
 		if suitable_memory_type_bits & 1 << i != 0
 			&& physical_device.memory_properties.memory_types[i as usize].property_flags
 			& required_memory_property_flags
 			== required_memory_property_flags
 		{
-			return Some(i);
+			return Ok(i);
 		}
 	}
-	None
+	Err(MemoryTypeError::NotFound)
 }
 
