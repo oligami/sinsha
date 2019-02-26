@@ -59,33 +59,14 @@ impl Engine {
 	fn start_menu(&mut self) {
 		let mut interaction_devices = InteractionDevices::new(&self.window);
 
-		let command_recorder = self.vulkan
-			.command_recorder()
-			.begin_recording();
-
-		let (textures, staging_buffer) = command_recorder.load_textures(
-			&["assets/textures/info_box.png"],
-			&[true],
-		);
-
-		let command_recorded = command_recorder.end_recording();
-		self.vulkan.submit_command_recorder(
-			&command_recorded,
-			vk::PipelineStageFlags::empty(),
-			&[],
-			&[],
-			&vk::Fence::null(),
-		);
-
 		self.vulkan.queue_wait_idle();
-		self.vulkan.destroy(command_recorded);
-		self.vulkan.destroy(staging_buffer);
 
 		let mut system_time = SystemTime::now();
 		let mut counter = 0_u64;
 		loop {
-			let command_recorder = match self.vulkan.begin_frame() {
-				Ok(command_recorder) => command_recorder,
+			let result = self.vulkan.begin_frame();
+			let graphic_cmd_recorder = match result {
+				Ok(cmd) => cmd,
 				Err(VkResult::ERROR_OUT_OF_DATE_KHR) | Err(VkResult::SUBOPTIMAL_KHR) => {
 					self.vulkan.deal_with_window_resize();
 					continue;
@@ -93,7 +74,7 @@ impl Engine {
 				Err(err) => panic!("{}", err.description()),
 			};
 
-			let command_recorder = command_recorder
+			let command_recorder = graphic_cmd_recorder
 				.begin_recording()
 				.begin_render_pass(&self.vulkan.default_clear_value())
 				.enter_gui_pipeline()
@@ -101,7 +82,8 @@ impl Engine {
 				.end_render_pass()
 				.end_recording();
 
-			match self.vulkan.end_frame(command_recorder) {
+			let result = self.vulkan.end_frame(command_recorder);
+			match result {
 				Ok(()) => (),
 				Err(VkResult::ERROR_OUT_OF_DATE_KHR) | Err(VkResult::SUBOPTIMAL_KHR) => {
 					self.vulkan.deal_with_window_resize();
@@ -132,7 +114,5 @@ impl Engine {
 			}
 			counter += 1;
 		}
-
-		self.vulkan.destroy(textures);
 	}
 }

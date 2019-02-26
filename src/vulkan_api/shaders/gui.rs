@@ -39,12 +39,12 @@ pub struct Extent2D<T> {
 	pub left: T,
 }
 
-pub struct Rect2Ds {
+pub struct Rect2Ds<'device> {
 	/// (usize: for vertex, descriptor set, and push constant, usize: for texture)
 	tag_and_idxs: HashMap<&'static str, (usize, usize)>,
 	positions: Vec<(Extent2D<f32>, Extent2D<i32>, XY)>,
-	vertex_buffers: BuffersWithMemory,
-	textures: ImagesWithMemory,
+	vertex_buffers: BuffersWithMemory<'device>,
+	textures: ImagesWithMemory<'device>,
 	descriptor_sets: DescriptorSets,
 	push_constants: Vec<RGBA>,
 }
@@ -65,8 +65,8 @@ struct Rect2DBuilder {
 	color_weight: RGBA,
 }
 
-pub struct Font {
-	image: ImagesWithMemory,
+pub struct Font<'device> {
+	image: ImagesWithMemory<'device>,
 }
 
 
@@ -132,7 +132,7 @@ pub const BOTTOM_LEFT: XY = XY::new(-1.0, 1.0);
 pub const BOTTOM_CENTER: XY = XY::new(0.0, 1.0);
 pub const BOTTOM_RIGHT: XY = XY::new(1.0, 1.0);
 
-impl GuiDraw for Rect2Ds {
+impl<'device> GuiDraw for Rect2Ds<'device> {
 	/// This function must be called,
 	/// after the command buffer has entered in the valid render pass and been bound gui pipeline.
 	/// The pipeline layout must be valid.
@@ -176,9 +176,13 @@ impl GuiDraw for Rect2Ds {
 	}
 }
 
-impl Rect2Ds {
+impl Rect2Ds<'_> {
 	pub fn start_builder() -> Rect2DsBuilder {
 		Rect2DsBuilder::start()
+	}
+
+	fn from_builders(builders: Vec<Rect2DBuilder>) -> Self {
+		unimplemented!()
 	}
 
 	pub fn valid_tag(&self, tag: &'static str) -> bool {
@@ -255,16 +259,6 @@ impl Rect2Ds {
 		);
 
 		vulkan.queue_wait_idle();
-		vulkan.destroy(staging_buffers);
-		vulkan.destroy(command_recorded);
-	}
-}
-
-impl VkDestroy for Rect2Ds {
-	fn destroy(self, device: &Device) {
-		self.descriptor_sets.destroy(device);
-		self.textures.destroy(device);
-		self.vertex_buffers.destroy(device);
 	}
 }
 
@@ -351,105 +345,9 @@ impl Rect2DsBuilder {
 		self.builders.last_mut().unwrap().color_weight = color_weight;
 		self
 	}
-
-	pub fn build(self, vulkan: &Vulkan) -> Rect2Ds {
-		let builders_num = self.builders.len();
-		let (buffer_infos, positions, push_constants, tag_and_idxs) = self.builders
-			.iter()
-			.enumerate()
-			.fold(
-				(
-					Vec::with_capacity(builders_num),
-					Vec::with_capacity(builders_num),
-					Vec::with_capacity(builders_num),
-					HashMap::with_capacity(builders_num),
-				),
-				|
-					(mut buffer_infos, mut positions, mut push_constants, mut tag_and_idxs),
-					(i, builder)
-				| {
-					let extent = {
-						let render_height = vulkan.swapchain.data.extent.height as f32;
-						let render_width = vulkan.swapchain.data.extent.width as f32;
-						let frame = XY::new(render_width, render_height);
-						builder.extent.normalize(frame, builder.origin)
-					};
-
-					let vertices: Vec<_> = {
-						let positions = extent.to_positions();
-
-						builder.color
-							.iter()
-							.zip(builder.tex_coord.iter())
-							.zip(positions.iter())
-							.map(|((&color, &texture), &position)| {
-								Vertex {
-									position,
-									color,
-									texture,
-								}
-							})
-							.collect()
-					};
-
-					buffer_infos.push(BufferDataInfo::new(vertices));
-
-					positions.push((extent, builder.extent, builder.origin));
-					push_constants.push(builder.color_weight);
-					tag_and_idxs
-						.insert(builder.tag, (i, builder.image_idx))
-						.ok_or(())
-						.expect_err("Same tag is prohibited.");
-
-					(buffer_infos, positions, push_constants, tag_and_idxs)
-				},
-			);
-
-
-
-		let (vertex_buffers, textures) = vulkan
-			.resource_loader()
-			.device_local_buffer(
-				buffer_infos,
-				vk::BufferUsageFlags::VERTEX_BUFFER,
-				vk::SharingMode::EXCLUSIVE,
-			)
-			.image_for_texture(
-				self.image_pathes,
-				vk::SharingMode::EXCLUSIVE,
-			)
-			.execute()
-			.finish();
-
-		let vertex_buffers = vertex_buffers.into_iter().next().unwrap();
-		let textures = textures.into_iter().next().unwrap();
-
-		let descriptor_image_infos: Vec<_> = self.builders
-			.iter()
-			.map(|builder| {
-				let image = textures.get(builder.image_idx);
-				vk::DescriptorImageInfo {
-					image_layout: image.layout(0),
-					image_view: image.view(),
-					sampler: builder.sampler,
-				}
-			})
-			.collect();
-
-		let descriptor_sets = vulkan.gui_descriptor_sets(&descriptor_image_infos[..]);
-
-		Rect2Ds {
-			tag_and_idxs,
-			positions,
-			vertex_buffers,
-			textures,
-			descriptor_sets,
-			push_constants,
-		}
-	}
 }
 
-impl Font {
+impl Font<'_> {
 	pub fn new() -> Self {
 		unimplemented!()
 	}

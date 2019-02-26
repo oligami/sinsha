@@ -5,8 +5,6 @@ use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::vk::StructureType;
 
-use crate::vulkan_api::VkDestroy;
-
 use std::ptr;
 use std::fs;
 use std::path::Path;
@@ -94,11 +92,4 @@ impl DescriptorSets {
 	}
 }
 
-impl VkDestroy for DescriptorSets {
-	fn destroy(self, device: &Device) {
-		unsafe {
-			device.destroy_descriptor_pool(self.descriptor_pool, None);
-		}
-	}
-}
 

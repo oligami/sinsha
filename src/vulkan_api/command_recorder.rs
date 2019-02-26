@@ -9,9 +9,9 @@ use crate::vulkan_api::shaders::gui::GuiDraw;
 use std::ptr;
 use std::marker::PhantomData;
 
-pub struct CommandRecorder<'a, T> {
+pub struct CommandRecorder<'a, 'device, T> {
 	physical_device: &'a PhysicalDevice,
-	device: &'a Device,
+	device: &'device Device,
 	queue: &'a vk::Queue,
 	command_buffer: vk::CommandBuffer,
 	command_pool: vk::CommandPool,
@@ -36,8 +36,8 @@ pub struct InRenderPass;
 pub struct GuiPipeline;
 pub struct End;
 
-impl<'a, T> CommandRecorder<'a, T> {
-	fn transit_into<U>(self) -> CommandRecorder<'a, U> {
+impl<'a, 'device, T> CommandRecorder<'a, 'device, T> {
+	fn transit_into<U>(self) -> CommandRecorder<'a, 'device, U> {
 		CommandRecorder {
 			physical_device: self.physical_device,
 			device: self.device,
@@ -49,10 +49,10 @@ impl<'a, T> CommandRecorder<'a, T> {
 	}
 }
 
-impl<'a> CommandRecorder<'a, Uninitialized> {
+impl<'a, 'device> CommandRecorder<'a, 'device, Uninitialized> {
 	pub(in crate::vulkan_api) fn new(
 		physical_device: &'a PhysicalDevice,
-		device: &'a Device,
+		device: &'device Device,
 		queue: &'a vk::Queue,
 	) -> Self {
 		unsafe {
@@ -62,7 +62,7 @@ impl<'a> CommandRecorder<'a, Uninitialized> {
 						s_type: StructureType::COMMAND_POOL_CREATE_INFO,
 						p_next: ptr::null(),
 						flags: vk::CommandPoolCreateFlags::empty(),
-						queue_family_index: physical_device.queue_family_idx,
+						queue_family_index: physical_device.queue_family_index,
 					},
 					None,
 				)
@@ -92,8 +92,8 @@ impl<'a> CommandRecorder<'a, Uninitialized> {
 	}
 }
 
-impl<'a> CommandRecorder<'a, Uninitialized> {
-	pub fn begin_recording(self) -> CommandRecorder<'a, Natural> {
+impl<'a, 'device> CommandRecorder<'a, 'device, Uninitialized> {
+	pub fn begin_recording(self) -> CommandRecorder<'a, 'device, Natural> {
 		unsafe {
 			self.device
 				.begin_command_buffer(
@@ -112,7 +112,7 @@ impl<'a> CommandRecorder<'a, Uninitialized> {
 	}
 }
 
-impl<'a> CommandRecorder<'a, Natural> {
+impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
 	pub fn transfer(
 		&self,
 		src_buffer: &BuffersWithMemory,
@@ -313,6 +313,9 @@ impl<'a> CommandRecorder<'a, Natural> {
 							}],
 							vk::Filter::LINEAR,
 						);
+
+						mip_width /= 2;
+						mip_height /= 2;
 					}
 				}
 			});
@@ -335,8 +338,8 @@ impl<'a> CommandRecorder<'a, Natural> {
 	}
 }
 
-impl<'a> CommandRecorder<'a, Natural> {
-	pub fn end_recording(self) -> CommandRecorder<'a, End> {
+impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
+	pub fn end_recording(self) -> CommandRecorder<'a, 'device, End> {
 		unsafe {
 			self.device
 				.end_command_buffer(self.command_buffer)
@@ -347,7 +350,7 @@ impl<'a> CommandRecorder<'a, Natural> {
 	}
 }
 
-impl<'a> CommandRecorder<'a, End> {
+impl<'a, 'device> CommandRecorder<'a, 'device, End> {
 	pub fn submit(
 		&self,
 		wait_dst_stage_mask: vk::PipelineStageFlags,
@@ -378,15 +381,6 @@ impl<'a> CommandRecorder<'a, End> {
 		}
 	}
 }
-
-impl VkDestroy for CommandRecorder<'_, End> {
-	fn destroy(self, device: &Device) {
-		unsafe {
-			device.destroy_command_pool(self.command_pool, None);
-		}
-	}
-}
-
 
 impl<'a> GraphicCommandRecorder<'a, Uninitialized> {
 	pub(in crate::vulkan_api) fn new(

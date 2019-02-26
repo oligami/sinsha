@@ -6,7 +6,6 @@ use ash::vk::StructureType;
 use crate::vulkan_api::PhysicalDevice;
 use crate::vulkan_api::shaders::*;
 use crate::vulkan_api::command_recorder::CommandRecorder;
-use crate::vulkan_api::VkDestroy;
 
 use std::ptr;
 use std::mem;
@@ -18,7 +17,8 @@ pub trait Bytes {
 	fn to_ref_bytes(&self) -> &Vec<u8>;
 }
 
-pub struct BuffersWithMemory {
+pub struct BuffersWithMemory<'device> {
+	device: &'device Device,
 	buffer: vk::Buffer,
 	memory: vk::DeviceMemory,
 	offsets: Vec<vk::DeviceSize>,
@@ -39,43 +39,31 @@ pub struct Image {
 	array_layers: u32,
 }
 
-pub struct ImagesWithMemory {
+pub struct ImagesWithMemory<'device> {
+	device: &'device Device,
 	images: Vec<Image>,
 	memory: vk::DeviceMemory,
 }
 
-pub struct ImagesIter<'a> {
+pub struct ImagesIter<'device, 'item> {
 	ptr: *const Image,
 	end: *const Image,
-	_marker: PhantomData<&'a ImagesWithMemory>,
+	_marker: PhantomData<&'item ImagesWithMemory<'device>>,
 }
 
-pub struct ImagesIterMut<'a> {
+pub struct ImagesIterMut<'device, 'item> {
 	ptr: *mut Image,
 	end: *mut Image,
-	_marker: PhantomData<&'a mut ImagesWithMemory>,
-}
-
-pub struct ResourceLoader<'a> {
-	physical_device: &'a PhysicalDevice,
-	device: &'a Device,
-	shaders: &'a Shaders,
-	queue: &'a vk::Queue,
-	command_pool: vk::CommandPool,
-	command_buffer: vk::CommandBuffer,
-	fence: vk::Fence,
-	staging_buffers: Vec<BuffersWithMemory>,
-	device_local_buffers: Vec<BuffersWithMemory>,
-	images: Vec<ImagesWithMemory>,
+	_marker: PhantomData<&'item mut ImagesWithMemory<'device>>,
 }
 
 pub struct Blit(vk::ImageBlit);
 
 
-impl BuffersWithMemory {
+impl<'device> BuffersWithMemory<'device> {
 	pub unsafe fn empty(
 		physical_device: &PhysicalDevice,
-		device: &Device,
+		device: &'device Device,
 		data_size: vk::DeviceSize,
 		buffer_usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
@@ -110,6 +98,7 @@ impl BuffersWithMemory {
 		device.bind_buffer_memory(buffer, memory, 0).unwrap();
 
 		Self {
+			device,
 			buffer,
 			memory,
 			offsets: Vec::new(),
@@ -118,7 +107,7 @@ impl BuffersWithMemory {
 
 	pub fn visible_coherent<T>(
 		physical_device: &PhysicalDevice,
-		device: &Device,
+		device: &'device Device,
 		data_of_buffers: Vec<T>,
 		buffer_usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
@@ -161,7 +150,7 @@ impl BuffersWithMemory {
 
 	pub fn device_local<T>(
 		physical_device: &PhysicalDevice,
-		device: &Device,
+		device: &'device Device,
 		data_of_buffers: Vec<T>,
 		buffer_usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
@@ -231,14 +220,15 @@ impl BuffersWithMemory {
 	}
 }
 
-impl VkDestroy for BuffersWithMemory {
-	fn destroy(self, device: &Device) {
+impl Drop for BuffersWithMemory<'_> {
+	fn drop(&mut self) {
 		unsafe {
-			device.destroy_buffer(self.buffer, None);
-			device.free_memory(self.memory, None);
+			self.device.destroy_buffer(self.buffer, None);
+			self.device.free_memory(self.memory, None);
 		}
 	}
 }
+
 
 impl BufferDataInfo {
 	pub fn new<T>(mut data: Vec<T>) -> Self {
@@ -306,7 +296,7 @@ impl Image {
 					mip_levels,
 					array_layers,
 					queue_family_index_count: 1,
-					p_queue_family_indices: &physical_device.queue_family_idx as *const _,
+					p_queue_family_indices: &physical_device.queue_family_index as *const _,
 				},
 				None,
 			)
@@ -463,19 +453,10 @@ impl Image {
 	}
 }
 
-impl VkDestroy for Image {
-	fn destroy(self, device: &Device) {
-		unsafe {
-			device.destroy_image(self.raw_handle, None);
-			device.destroy_image_view(self.view, None);
-		}
-	}
-}
-
-impl ImagesWithMemory {
+impl<'device> ImagesWithMemory<'device> {
 	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
-		device: &Device,
+		device: &'device Device,
 		mut images: Vec<Image>,
 		memory_properties: vk::MemoryPropertyFlags,
 	) -> Self {
@@ -520,83 +501,10 @@ impl ImagesWithMemory {
 			});
 
 		Self {
+			device,
 			images,
 			memory,
 		}
-	}
-
-	#[deprecated]
-	pub fn textures(
-		physical_device: &PhysicalDevice,
-		device: &Device,
-		pathes: Vec<&'static str>,
-		sharing_mode: vk::SharingMode,
-		command_buffer: vk::CommandBuffer,
-	) -> (Self, BuffersWithMemory) {
-		let cap_size = pathes.len();
-		let (images, data, offsets, _) = pathes
-			.into_iter()
-			.fold(
-				(
-					Vec::with_capacity(cap_size),
-					Vec::with_capacity(cap_size),
-					Vec::with_capacity(cap_size),
-					0
-				),
-				|(mut images, mut data, mut offsets, offset), path| {
-					let image = image_crate::open(path).unwrap().to_rgba();
-					let (width, height) = image.dimensions();
-					let mut image_data = image.into_raw();
-
-					let image = unsafe {
-						Image::uninitialized(
-							physical_device,
-							device,
-							vk::Extent3D {
-								width,
-								height,
-								depth: 1,
-							},
-							vk::Format::R8G8B8A8_UNORM,
-							vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-							sharing_mode,
-							vk::ImageLayout::UNDEFINED,
-							vk::SampleCountFlags::TYPE_1,
-							vk::ImageAspectFlags::COLOR,
-							1,
-							1,
-							vk::ImageType::TYPE_2D,
-						)
-					};
-
-					images.push(image);
-					offsets.push(offset);
-					let offset = offset + image_data.len() as vk::DeviceSize;
-					data.append(&mut image_data);
-
-					(images, data, offsets, offset)
-				}
-			);
-
-		let staging_buffer = BuffersWithMemory::visible_coherent(
-			physical_device,
-			device,
-			vec![BufferDataInfo::new(data)],
-			vk::BufferUsageFlags::TRANSFER_SRC,
-			vk::SharingMode::EXCLUSIVE,
-			vk::MemoryPropertyFlags::empty(),
-		);
-
-		let mut textures = unsafe {
-			ImagesWithMemory::uninitialized(
-				physical_device,
-				device,
-				images,
-				vk::MemoryPropertyFlags::DEVICE_LOCAL,
-			)
-		};
-
-		(textures, staging_buffer)
 	}
 
 	#[inline]
@@ -604,15 +512,15 @@ impl ImagesWithMemory {
 		&self.images[idx]
 	}
 
-	pub fn iter<'a>(&self) -> ImagesIter<'a> {
+	pub fn iter<'item>(&self) -> ImagesIter<'device, 'item> {
 		ImagesIter {
 			ptr: &self.images[0] as *const _,
 			end: self.images.last().unwrap_or(&self.images[0]) as *const _,
-			_marker: PhantomData::<&'a Self>,
+			_marker: PhantomData::<&Self>,
 		}
 	}
 
-	pub fn iter_mut(&mut self) -> ImagesIterMut {
+	pub fn iter_mut<'item>(&mut self) -> ImagesIterMut<'device, 'item> {
 		let ptr = &mut self.images[0] as *mut _;
 		ImagesIterMut {
 			ptr,
@@ -622,34 +530,21 @@ impl ImagesWithMemory {
 	}
 }
 
-impl VkDestroy for ImagesWithMemory {
-	fn destroy(self, device: &Device) {
-		unsafe {
-			device.free_memory(self.memory, None);
-			self.images
-				.into_iter()
-				.for_each(|image| {
-					image.destroy(device);
-				});
-		}
-	}
-}
-
-impl Index<usize> for ImagesWithMemory {
+impl<'device> Index<usize> for ImagesWithMemory<'device> {
 	type Output = Image;
 	fn index(&self, index: usize) -> &Self::Output {
 		&self.images[index]
 	}
 }
 
-impl IndexMut<usize> for ImagesWithMemory {
+impl<'device> IndexMut<usize> for ImagesWithMemory<'device> {
 	fn index_mut(&mut self, index: usize) -> &mut Image {
 		&mut self.images[index]
 	}
 }
 
-impl<'a> Iterator for ImagesIter<'a> {
-	type Item = &'a Image;
+impl<'device, 'item> Iterator for ImagesIter<'device, 'item> {
+	type Item = &'item Image;
 	fn next(&mut self) -> Option<Self::Item> {
 		unsafe {
 			if self.ptr == self.end {
@@ -662,8 +557,8 @@ impl<'a> Iterator for ImagesIter<'a> {
 	}
 }
 
-impl<'a> Iterator for ImagesIterMut<'a> {
-	type Item = &'a mut Image;
+impl<'device, 'item> Iterator for ImagesIterMut<'device, 'item> {
+	type Item = &'item mut Image;
 	fn next(&mut self) -> Option<Self::Item> {
 		unsafe {
 			if self.ptr == self.end {
@@ -673,170 +568,6 @@ impl<'a> Iterator for ImagesIterMut<'a> {
 				self.ptr.as_mut()
 			}
 		}
-	}
-}
-
-impl<'a> ResourceLoader<'a> {
-	pub fn new(
-		physical_device: &'a PhysicalDevice,
-		device: &'a Device,
-		queue: &'a vk::Queue,
-		shaders: &'a Shaders,
-	) -> Self {
-		let command_pool = unsafe {
-			device
-				.create_command_pool(
-					&vk::CommandPoolCreateInfo {
-						s_type: StructureType::COMMAND_POOL_CREATE_INFO,
-						p_next: ptr::null(),
-						flags: vk::CommandPoolCreateFlags::TRANSIENT,
-						queue_family_index: physical_device.queue_family_idx,
-					},
-					None,
-				)
-				.unwrap()
-		};
-
-		let command_buffer = unsafe {
-			device
-				.allocate_command_buffers(
-					&vk::CommandBufferAllocateInfo {
-						s_type: StructureType::COMMAND_BUFFER_ALLOCATE_INFO,
-						p_next: ptr::null(),
-						level: vk::CommandBufferLevel::PRIMARY,
-						command_pool,
-						command_buffer_count: 1,
-					}
-				)
-				.unwrap()[0]
-		};
-
-		unsafe {
-			device
-				.begin_command_buffer(
-					command_buffer,
-					&vk::CommandBufferBeginInfo {
-						s_type: StructureType::COMMAND_BUFFER_BEGIN_INFO,
-						p_next: ptr::null(),
-						flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
-						p_inheritance_info: ptr::null(),
-					},
-				)
-				.unwrap();
-		}
-
-		let fence = unsafe {
-			device
-				.create_fence(
-					&vk::FenceCreateInfo {
-						s_type: StructureType::FENCE_CREATE_INFO,
-						p_next: ptr::null(),
-						flags: vk::FenceCreateFlags::empty(),
-					},
-					None,
-				)
-				.unwrap()
-		};
-
-		Self {
-			physical_device,
-			device,
-			queue,
-			shaders,
-			command_pool,
-			command_buffer,
-			fence,
-			staging_buffers: Vec::new(),
-			device_local_buffers: Vec::new(),
-			images: Vec::new(),
-		}
-	}
-}
-
-impl ResourceLoader<'_> {
-	pub fn device_local_buffer(
-		mut self,
-		data_infos: Vec<BufferDataInfo>,
-		buffer_usage: vk::BufferUsageFlags,
-		sharing_mode: vk::SharingMode,
-	) -> Self {
-		let (device_local_buffer, staging_buffer) = BuffersWithMemory::device_local(
-			self.physical_device,
-			self.device,
-			data_infos,
-			buffer_usage,
-			sharing_mode,
-			self.command_buffer,
-		);
-
-		self.device_local_buffers.push(device_local_buffer);
-		self.staging_buffers.push(staging_buffer);
-
-		self
-	}
-
-	pub fn image_for_texture(
-		mut self,
-		pathes: Vec<&'static str>,
-		sharing_mode: vk::SharingMode,
-	) -> Self {
-		let (images, staging_buffer) = ImagesWithMemory::textures(
-			self.physical_device,
-			self.device,
-			pathes,
-			sharing_mode,
-			self.command_buffer,
-		);
-
-		self.images.push(images);
-		self.staging_buffers.push(staging_buffer);
-
-		self
-	}
-
-	pub fn execute(self) -> Self {
-		unsafe {
-			self.device.end_command_buffer(self.command_buffer).unwrap();
-
-			self.device
-				.queue_submit(
-					*self.queue,
-					&[
-						vk::SubmitInfo {
-							s_type: StructureType::SUBMIT_INFO,
-							p_next: ptr::null(),
-							command_buffer_count: 1,
-							p_command_buffers: &self.command_buffer as *const _,
-							wait_semaphore_count: 0,
-							p_wait_semaphores: ptr::null(),
-							signal_semaphore_count: 0,
-							p_signal_semaphores: ptr::null(),
-							p_wait_dst_stage_mask: ptr::null(),
-						}
-					],
-					self.fence,
-				)
-				.unwrap();
-		}
-
-		self
-	}
-
-	pub fn finish(mut self) -> (Vec<BuffersWithMemory>, Vec<ImagesWithMemory>) {
-		unsafe {
-			self.device.wait_for_fences(&[self.fence], true, !0_u64).unwrap();
-
-			self.device.destroy_fence(self.fence, None);
-			self.device.destroy_command_pool(self.command_pool, None);
-
-			let mut staging_buffers = Vec::new();
-			mem::swap(&mut staging_buffers, &mut self.staging_buffers);
-			staging_buffers
-				.into_iter()
-				.for_each(|staging_buffer| staging_buffer.destroy(self.device));
-		}
-
-		(self.device_local_buffers, self.images)
 	}
 }
 
@@ -858,7 +589,7 @@ unsafe fn create_buffer(
 				usage,
 				sharing_mode,
 				queue_family_index_count: 1,
-				p_queue_family_indices: &physical_device.queue_family_idx as *const _,
+				p_queue_family_indices: physical_device.queue_family_index_ptr(),
 			},
 			None,
 		)
