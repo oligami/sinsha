@@ -113,10 +113,10 @@ impl<'a, 'device> CommandRecorder<'a, 'device, Uninitialized> {
 }
 
 impl<'a, 'device> CommandRecorder<'a, 'device, Natural> {
-	pub fn transfer<T>(
+	pub fn buffer_to_buffer<T, U>(
 		&self,
 		src_buffer: &BufferWithMemory<T>,
-		dst_buffer: &BufferWithMemory<NonRw>,
+		dst_buffer: &BufferWithMemory<U>,
 		region_infos: &[vk::BufferCopy],
 	) {
 		unsafe {
@@ -360,6 +360,12 @@ impl<'a, 'device> CommandRecorder<'a, 'device, End> {
 				)
 				.unwrap();
 		}
+	}
+}
+
+impl Drop for CommandRecorder<'_, '_, End> {
+	fn drop(&mut self) {
+		unsafe { self.device.destroy_command_pool(self.command_pool); }
 	}
 }
 

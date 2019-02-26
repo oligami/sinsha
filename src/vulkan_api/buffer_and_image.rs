@@ -11,6 +11,7 @@ use std::io;
 use std::fmt;
 use std::ptr;
 use std::mem;
+use std::slice;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
 use std::error::Error;
@@ -23,7 +24,14 @@ pub trait Bytes {
 pub struct Rw;
 pub struct NonRw;
 
-pub struct BufferWithMemory<'device, T> {
+pub trait RwMarker {}
+impl RwMarker for Rw {}
+impl RwMarker for NonRw {}
+
+/// If T is Rw, memory properties always contain HOST_VISIBLE and HOST_COHERENT.
+/// If T is NonRw, memory properties may contain HOST_VISIBLE and/or HOST_COHERENT.
+/// NonRw doesn't means that buffer data is immutable but that buffer data can't be accessed by CPU.
+pub struct BufferWithMemory<'device, T> where T: RwMarker {
 	device: &'device Device,
 	buffer: vk::Buffer,
 	memory: vk::DeviceMemory,
@@ -32,10 +40,12 @@ pub struct BufferWithMemory<'device, T> {
 }
 
 pub struct BufferAccessor<'buffer, 'device> {
-	buffer_with_memory: &'buffer mut BufferWithMemory<'device, Rw>,
+	buffer: &'buffer mut [u8],
 	seeker: u64,
+	buffer_with_memory: &'buffer mut BufferWithMemory<'device, Rw>,
 }
 
+#[deprecated]
 pub struct BufferDataInfo {
 	byte_data: Vec<u8>,
 }
@@ -74,10 +84,8 @@ pub enum MemoryTypeError {
 	NotFound,
 }
 
-
-/// Memory propertis contain HOST_VISIBLE and HOST_COHERENT.
-impl<'device> BufferWithMemory<'device, Rw> {
-	pub unsafe fn uninitialized(
+impl<'device, T> BufferWithMemory<'device, T> where T: RwMarker {
+	unsafe fn uninitialized_unmarked(
 		physical_device: &PhysicalDevice,
 		device: &'device Device,
 		data_size: vk::DeviceSize,
@@ -120,15 +128,75 @@ impl<'device> BufferWithMemory<'device, Rw> {
 				buffer,
 				memory,
 				size: data_size,
-				_marker: PhantomData::<Rw>,
+				_marker: PhantomData::<T>,
 			}
 		)
 	}
 
-	pub fn accessor(&mut self) -> BufferAccessor {
-		BufferAccessor {
-			buffer_with_memory: &mut self,
-			seeker: 0,
+	pub fn raw_handle(&self) -> vk::Buffer { self.buffer }
+	pub fn memory(&self) -> vk::DeviceMemory { self.memory }
+}
+
+impl<'device> BufferWithMemory<'device, NonRw> {
+	pub unsafe fn uninitialized(
+		physical_device: &PhysicalDevice,
+		device: &'device Device,
+		data_size: vk::DeviceSize,
+		buffer_usage: vk::BufferUsageFlags,
+		sharing_mode: vk::SharingMode,
+		memory_properties: vk::MemoryPropertyFlags,
+	) -> Result<Self, Box<dyn Error>> {
+		BufferWithMemory::uninitialized_unmarked(
+			physical_device,
+			device,
+			data_size,
+			buffer_usage,
+			sharing_mode,
+			memory_properties,
+		)
+	}
+
+}
+
+impl<'device> BufferWithMemory<'device, Rw> {
+	pub unsafe fn uninitialized(
+		physical_device: &PhysicalDevice,
+		device: &'device Device,
+		data_size: vk::DeviceSize,
+		buffer_usage: vk::BufferUsageFlags,
+		sharing_mode: vk::SharingMode,
+		memory_properties: vk::MemoryPropertyFlags,
+	) -> Result<Self, Box<dyn Error>> {
+		BufferWithMemory::uninitialized_unmarked(
+			physical_device,
+			device,
+			data_size,
+			buffer_usage,
+			sharing_mode,
+			memory_properties
+				| vk::MemoryPropertyFlags::HOST_VISIBLE
+				| vk::MemoryPropertyFlags::HOST_COHERENT
+		)
+	}
+
+	pub fn accessor(&mut self) -> Result<BufferAccessor, vk::Result> {
+		unsafe {
+			let access_to_memory = self.device.map_memory(
+				self.memory,
+				0,
+				self.size,
+				vk::MemoryMapFlags::empty(),
+			)? as *mut u8;
+
+			let buffer = slice::from_raw_parts_mut(access_to_memory, self.size as usize);
+
+			Ok(
+				BufferAccessor {
+					buffer,
+					seeker: 0,
+					buffer_with_memory: &mut self,
+				}
+			)
 		}
 	}
 
@@ -221,17 +289,9 @@ impl<'device> BufferWithMemory<'device, Rw> {
 
 		(device_local_buffer, staging_buffer)
 	}
-
-	pub fn raw_handle(&self) -> vk::Buffer {
-		self.buffer
-	}
-
-	pub fn memory(&self) -> vk::DeviceMemory {
-		self.memory
-	}
 }
 
-impl<T> Drop for BufferWithMemory<'_, T> {
+impl<T> Drop for BufferWithMemory<'_, T> where T: RwMarker {
 	fn drop(&mut self) {
 		unsafe {
 			self.device.destroy_buffer(self.buffer, None);
@@ -240,51 +300,57 @@ impl<T> Drop for BufferWithMemory<'_, T> {
 	}
 }
 
-impl io::Read for BufferAccessor {
-	fn read(&self, buf: &mut [u8]) -> Result<usize> {
+impl io::Read for BufferAccessor<'_, '_> {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+		let requested_end = self.seeker + buf.len() as u64;
+		let read_bytes = if requested_end > self.buffer_with_memory.size {
+			let read_bytes = (self.buffer_with_memory.size - self.seeker) as usize;
+			buf[..read_bytes].copy_from_slice(&self.buffer[self.seeker..]);
+			read_bytes
+		} else {
+			buf.copy_from_slice(&self.buffer[self.seeker..requested_end as usize]);
+			buf.len()
+		};
 
+		Ok(read_bytes)
 	}
 }
 
-impl io::Seek for BufferAccessor {
+impl io::Seek for BufferAccessor<'_, '_> {
 	fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
 		match pos {
-			io::SeekFrom::Start(offset) => self.seeker = offset,
+			io::SeekFrom::Start(delta) => self.seeker = delta,
 			io::SeekFrom::Current(delta) => self.seeker += delta,
-			io::SeekFrom::End(delta) => {
-				self.seeker = (self.buffer_with_memory.size as i64 + delta) as u64;
-			},
+			io::SeekFrom::End(delta) => self.seeker = (self.end as i64 + delta) as u64,
 		}
 
 		Ok(self.seeker)
 	}
 }
 
-impl io::Write for BufferAccessor {
+impl io::Write for BufferAccessor<'_, '_> {
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		unsafe {
-			let result_of_map_memory = self.buffer_with_memory.device
-				.map_memory(
-					self.buffer_with_memory.memory,
-					self.seeker,
-					buf.len() as _,
-					vk::MemoryMapFlags::empty(),
-				);
-			let access_to_memory = match result_of_map_memory {
-				Ok(ptr) => ptr as *mut u8,
-				Err(err) => return Err(io::Error::new(io::ErrorKind::Other, err)),
-			};
+		let requested_end = self.seeker + buf.len() as u64;
+		let written_bytes = if requested_end > self.buffer_with_memory.size {
+			let written_bytes = (self.buffer_with_memory.size - self.seeker) as usize;
+			self.buffer[self.seeker..].copy_from_slice(&buf[..written_bytes]);
+			written_bytes
+		} else {
+			self.buffer[self.seeker..requested_end as usize].copy_from_slice(&buf[..]);
+			buf.len()
+		};
 
-			access_to_memory.copy_from(buf.as_ptr(), buf.len());
-
-			self.seeker += buf.len() as _;
-			Ok(buf.len())
-		}
+		Ok(written_bytes)
 	}
 
 	fn flush(&mut self) -> io::Result<()> { Ok(()) }
 }
 
+impl Drop for BufferAccessor<'_, '_> {
+	fn drop(&mut self) {
+		unsafe { self.buffer_with_memory.device.unmap_memory(self.buffer_with_memory.memory); }
+	}
+}
 
 impl BufferDataInfo {
 	pub fn new<T>(mut data: Vec<T>) -> Self {

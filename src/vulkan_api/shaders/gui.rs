@@ -39,7 +39,7 @@ pub struct Extent2D<T> {
 	pub left: T,
 }
 
-pub struct Rect2Ds<'device, T> {
+pub struct Rect2Ds<'device, T> where T: RwMarker {
 	/// (usize: for vertex, descriptor set, and push constant, usize: for texture)
 	tag_and_idxs: HashMap<&'static str, (usize, usize)>,
 	positions: Vec<(Extent2D<f32>, Extent2D<i32>, XY)>,
