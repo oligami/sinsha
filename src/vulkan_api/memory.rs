@@ -17,7 +17,8 @@ use std::ops::{Index, IndexMut, Range};
 use std::error::Error;
 
 /// This struct must be bound to memory otherwise destructor won't run.
-pub struct Buffer {
+pub struct Buffer<'device> {
+	device: &'device Device,
 	raw_handle: vk::Buffer,
 	/// Buffer location in the bound memory.
 	/// (range.start = range.end = 0) means that this buffer is not bound to any memory.
@@ -25,7 +26,8 @@ pub struct Buffer {
 }
 
 /// This struct must be bound to memory otherwise destructor won't run.
-pub struct Image {
+pub struct Image<'device> {
+	device: &'device Device,
 	raw_handle: vk::Image,
 	/// if view is null, this image is not bound to any memory.
 	view: vk::ImageView,
@@ -37,17 +39,23 @@ pub struct Image {
 	array_layers: u32,
 }
 
-pub struct Rw;
-pub struct NonRw;
+pub struct MemoryAllocator<'pd, 'device> {
+	buffer: Option<Buffer<'device>>,
+	images: Vec<(Image<'device>, vk::ImageViewType, vk::ComponentMapping)>,
+	physical_device: &'pd PhysicalDevice,
+	device: &'device Device,
+	memory_properties: vk::MemoryPropertyFlags,
+}
 
 /// If T is Rw, memory properties always contain HOST_VISIBLE and HOST_COHERENT.
 /// If T is NonRw, memory properties may contain HOST_VISIBLE and/or HOST_COHERENT.
 /// NonRw doesn't means that buffer data is immutable but that buffer data can't be accessed by CPU.
+/// Memory, Buffer and Images have same lifetime because they must be created by the same Device.
 pub struct Memory<'device> {
 	device: &'device Device,
 	raw_handle: vk::DeviceMemory,
-	buffer: Buffer,
-	images: Vec<Image>,
+	buffer: Option<Buffer<'device>>,
+	images: Vec<Image<'device>>,
 }
 
 pub struct MemoryAccessor<'memory, 'device> {
@@ -61,10 +69,10 @@ pub enum MemoryTypeError {
 	NotFound,
 }
 
-impl Buffer {
+impl<'device> Buffer<'device> {
 	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
-		device: &Device,
+		device: &'device Device,
 		size: vk::DeviceSize,
 		usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
@@ -85,6 +93,7 @@ impl Buffer {
 
 		Ok(
 			Self {
+				device,
 				raw_handle,
 				range: 0..0,
 			}
@@ -102,14 +111,18 @@ impl Buffer {
 	}
 }
 
-impl Drop for Buffer {
-	fn drop(&mut self) { debug_assert!(self.bound_to_memory()); }
+impl Drop for Buffer<'_> {
+	fn drop(&mut self) {
+		unsafe {
+			self.device.destroy_buffer(self.raw_handle, None);
+		}
+	}
 }
 
-impl Image {
+impl<'device> Image<'device> {
 	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
-		device: &Device,
+		device: &'device Device,
 		extent: vk::Extent3D,
 		format: vk::Format,
 		usage: vk::ImageUsageFlags,
@@ -145,6 +158,7 @@ impl Image {
 			.unwrap();
 
 		Self {
+			device,
 			raw_handle: image,
 			view: vk::ImageView::null(),
 			extent,
@@ -242,35 +256,75 @@ impl Image {
 
 	#[inline]
 	pub fn bound_to_memory(&self) -> bool {
-		self.view != vk::ImageView::null()
+		unimplemented!()
 	}
 }
 
-impl Drop for Image {
-	fn drop(&mut self) { debug_assert!(self.bound_to_memory()); }
+impl Drop for Image<'_> {
+	fn drop(&mut self) {
+		unsafe {
+			self.device.destroy_image(self.raw_handle, None);
+			if self.view != vk::ImageView::null() {
+				self.device.destroy_image_view(self.view, None);
+			}
+		}
+	}
+}
+
+impl MemoryAllocator<'_, '_> {
+	pub fn bind_buffer(mut self, buffer: Buffer) -> Self {
+		debug_assert!(self.buffer.is_none());
+		self.buffer = Some(buffer);
+		self
+	}
+
+	pub fn bind_image(
+		mut self,
+		image: Image,
+		view_type: vk::ImageViewType,
+		component_mapping: vk::ComponentMapping,
+	) -> Self {
+		self.images.push((image, view_type, component_mapping));
+		self
+	}
+
+	/// This method is unsafe because inner data is uninitialized.
+	pub unsafe fn allocate(self) -> Result<Memory, Box<dyn Error>> {
+		let obj_num = self.images.len() + if self.buffer.is_some() { 1 } else { 0 };
+		debug_assert!(obj_num > 0);
+		let mut memory_requirements = Vec::with_capacity(obj_num);
+		if self.buffer.is_some() { memory_requirements.push() }
+
+		unimplemented!()
+	}
 }
 
 impl<'device> Memory<'device> {
+	pub fn allocator<'pd>(
+		physical_device: &'pd PhysicalDevice,
+		device: &'device Device,
+		memory_properties: vk::MemoryPropertyFlags,
+	) -> MemoryAllocator<'pd, 'device> {
+		MemoryAllocator {
+			physical_device,
+			buffer: None,
+			images: Vec::new(),
+			memory_properties,
+		}
+	}
+
 	pub unsafe fn uninitialized(
 		physical_device: &PhysicalDevice,
 		device: &'device Device,
-		(mut buffer, buffer_pos): (Buffer, usize),
+		mut buffer: Buffer,
 		images: Vec<Image>,
 		memory_properties: vk::MemoryPropertyFlags,
 	) -> Result<Self, Box<dyn Error>> {
-		let mut memory_requirements: Vec<_> = images[..buffer_pos]
-			.iter()
-			.map(|image| device.get_image_memory_requirements(image.raw_handle))
-			.collect();
-
-		memory_requirements.reserve(images.len() - buffer_pos + 1);
+		let mut memory_requirements = Vec::with_capacity(images.len() + 1);
 		memory_requirements.push(device.get_buffer_memory_requirements(buffer.raw_handle));
-
-		images[buffer_pos..]
-			.iter()
-			.for_each(|image| {
-				memory_requirements.push(device.get_image_memory_requirements(image.raw_handle));
-			});
+		images.iter().for_each(|image| {
+			memory_requirements.push(device.get_image_memory_requirements(image.raw_handle));
+		});
 
 		let (allocation_size, offsets, required_memory_type) = memory_requirements
 			.into_iter()
