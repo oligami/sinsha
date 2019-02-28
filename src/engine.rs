@@ -48,7 +48,7 @@ impl Engine {
 		alloc.bind_buffer(unsafe {
 			Buffer::uninitialized(
 				vk_core,
-				128,
+				0x100000,
 				vk::BufferUsageFlags::VERTEX_BUFFER,
 				vk::SharingMode::EXCLUSIVE,
 			).unwrap()

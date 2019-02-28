@@ -70,8 +70,8 @@ pub struct VkGraphic<'vk_core> {
 	vk_core: &'vk_core VkCore,
 	swapchain: Swapchain,
 	render_pass: vk::RenderPass,
-	framebuffers: Vec<vk::Framebuffer>,
 	shaders: Shaders,
+	framebuffers: Vec<vk::Framebuffer>,
 }
 
 struct Semaphores {
@@ -472,8 +472,8 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				vk_core,
 				swapchain,
 				render_pass,
-				framebuffers,
 				shaders,
+				framebuffers,
 			}
 		}
 	}
@@ -482,24 +482,31 @@ impl<'vk_core> VkGraphic<'vk_core> {
 impl Drop for VkGraphic<'_> {
 	fn drop(&mut self) {
 		unsafe {
-			self.swapchain.images
-				.iter()
-				.for_each(|&(image, view)| {
-					self.vk_core.device.destroy_image(image, None);
-					self.vk_core.device.destroy_image_view(view, None);
-				});
-			self.swapchain.loader.destroy_swapchain(self.swapchain.raw_handle, None);
-			self.vk_core.device.destroy_render_pass(self.render_pass, None);
+			eprintln!("Dropping VkGraphic.");
+			eprintln!("Dropping Framebuffers.");
 			self.framebuffers
 				.iter()
 				.for_each(|&framebuffer| {
 					self.vk_core.device.destroy_framebuffer(framebuffer, None);
 				});
+			eprintln!("Dropping Render pass.");
+			self.vk_core.device.destroy_render_pass(self.render_pass, None);
+			eprintln!("Dropping Swapchain images and views.");
+			self.swapchain.images
+				.iter()
+				.for_each(|&(_image, view)| {
+					// image must not be destroyed by device.destroy_image().
+					// image will destroyed by destroying swapchain.
+					self.vk_core.device.destroy_image_view(view, None);
+				});
+			eprintln!("Dropping SwapchainKHR.");
+			self.swapchain.loader.destroy_swapchain(self.swapchain.raw_handle, None);
 //			self.vk_core.device.destroy_pipeline(self.shaders.gui.pipeline, None);
 //			self.vk_core.device.destroy_pipeline_layout(self.shaders.gui.pipeline_layout, None);
 //			self.vk_core.device
 //				.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
 		}
+		eprintln!("Dropped VkGraphic.");
 	}
 }
 

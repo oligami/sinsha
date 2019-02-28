@@ -56,9 +56,16 @@ pub struct MemoryBlock<'vk_core> {
 }
 
 pub struct MemoryAccessor<'memory, 'vk_core> {
-	buffer: &'memory mut [u8],
-	seeker: u64,
-	memory: &'memory MemoryBlock<'vk_core>,
+	memory_block: &'memory MemoryBlock<'vk_core>,
+	mapped_memory: &'memory mut [u8],
+	cursor: u64,
+	edited_ranges: Vec<vk::MappedMemoryRange>,
+}
+
+#[derive(Debug)]
+pub enum MemoryAccessError {
+	NoBuffer,
+	VkFailed(vk::Result),
 }
 
 #[derive(Debug)]
@@ -112,6 +119,7 @@ impl Drop for Buffer<'_> {
 		unsafe {
 			self.vk_core.device.destroy_buffer(self.raw_handle, None);
 		}
+		eprintln!("Dropping Buffer.");
 	}
 }
 
@@ -229,6 +237,8 @@ impl Drop for Image<'_> {
 				self.vk_core.device.destroy_image_view(self.view, None);
 			}
 		}
+
+		eprintln!("Dropping Image.");
 	}
 }
 
@@ -353,8 +363,32 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 		}
 	}
 
-	pub fn accessor(&mut self) {
-		unimplemented!()
+	pub fn accessor<'mem>(&'mem self) -> Result<MemoryAccessor<'mem, 'vk_core>, MemoryAccessError> {
+		unsafe {
+			self.buffer
+				.as_ref()
+				.map(|buffer| {
+					let ptr = self.vk_core.device
+						.map_memory(
+							self.raw_handle,
+							buffer.range.start,
+							buffer.size(),
+							vk::MemoryMapFlags::empty(),
+						)
+						.map_err(|vk_err| MemoryAccessError::VkFailed(vk_err))? as *mut u8;
+
+					Ok(slice::from_raw_parts_mut::<'mem>(ptr, buffer.size() as usize))
+				})
+				.ok_or(MemoryAccessError::NoBuffer)?
+				.map(|mapped_memory| {
+					MemoryAccessor {
+						memory_block: self,
+						mapped_memory,
+						cursor: 0,
+						edited_ranges: Vec::new(),
+					}
+				})
+		}
 	}
 }
 
@@ -363,8 +397,71 @@ impl Drop for MemoryBlock<'_> {
 		unsafe {
 			self.vk_core.device.free_memory(self.raw_handle, None);
 		}
+
+		eprintln!("Dropping Memory.");
 	}
 }
+
+impl io::Read for MemoryAccessor<'_, '_> {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+		let read_bytes = io::Read::read(&self.mapped_memory[self.cursor as usize..], buf)?;
+		self.cursor += read_bytes;
+		Ok(read_bytes)
+	}
+}
+
+impl io::Seek for MemoryAccessor<'_, '_> {
+	fn seek(&mut self, seek_from: io::SeekFrom) -> io::Result<u64> {
+		match seek_from {
+			io::SeekFrom::Start(n) => self.cursor = n,
+			io::SeekFrom::Current(n) => self.cursor += n,
+			io::SeekFrom::End(n) => self.cursor = (self.mapped_memory.len() as i64 - n) as u64,
+		}
+
+		Ok(self.cursor)
+	}
+}
+
+impl io::Write for MemoryAccessor<'_, '_> {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+		let written_bytes = io::Write::write(&mut self.mapped_memory, buf)?;
+		self.edited_ranges.push(
+			vk::MappedMemoryRange {
+				s_type: StructureType::MAPPED_MEMORY_RANGE,
+				p_next: ptr::null(),
+				memory: self.memory_block.raw_handle,
+				offset: self.cursor,
+				size: written_bytes as u64,
+			}
+		);
+
+		Ok(written_bytes)
+	}
+
+	fn flush(&mut self) -> io::Result<()> {
+		unsafe {
+			self.memory_block.vk_core.device
+				.flush_mapped_memory_ranges(&self.edited_ranges[..])
+				.map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
+			self.memory_block.vk_core.device
+				.invalidate_mapped_memory_ranges(&self.edited_ranges[..])
+				.map_err(|err| io::Error::new(io::ErrorKind::Other, err))
+		}
+	}
+}
+
+impl fmt::Display for MemoryAccessError {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			MemoryAccessError::NoBuffer => write!(f, "Not found buffer.\
+				If you want to  access to images directly, use all_accessor()."
+			),
+			MemoryAccessError::VkFailed(vk_result) => write!(f, "vk::Result: {}", vk_result),
+		}
+	}
+}
+
+impl Error for MemoryAccessError {}
 
 
 impl fmt::Display for MemoryTypeError {
@@ -376,6 +473,7 @@ impl fmt::Display for MemoryTypeError {
 		}
 	}
 }
+
 impl Error for MemoryTypeError {}
 
 
