@@ -3,9 +3,7 @@ use ash::Device;
 use ash::version::DeviceV1_0;
 use ash::vk::StructureType;
 
-use crate::vulkan_api::PhysicalDevice;
-use crate::vulkan_api::shaders::*;
-use crate::vulkan_api::command_recorder::CommandRecorder;
+use crate::vulkan::*;
 
 use std::io;
 use std::fmt;
@@ -17,8 +15,8 @@ use std::ops::{Index, IndexMut, Range};
 use std::error::Error;
 
 /// This struct must be bound to memory otherwise destructor won't run.
-pub struct Buffer<'device> {
-	device: &'device Device,
+pub struct Buffer<'vk_core> {
+	vk_core: &'vk_core VkCore,
 	raw_handle: vk::Buffer,
 	/// Buffer location in the bound memory.
 	/// (range.start = range.end = 0) means that this buffer is not bound to any memory.
@@ -26,8 +24,8 @@ pub struct Buffer<'device> {
 }
 
 /// This struct must be bound to memory otherwise destructor won't run.
-pub struct Image<'device> {
-	device: &'device Device,
+pub struct Image<'vk_core> {
+	vk_core: &'vk_core VkCore,
 	raw_handle: vk::Image,
 	/// if view is null, this image is not bound to any memory.
 	view: vk::ImageView,
@@ -39,29 +37,28 @@ pub struct Image<'device> {
 	array_layers: u32,
 }
 
-pub struct MemoryAllocator<'pd, 'device> {
-	buffer: Option<Buffer<'device>>,
-	images: Vec<(Image<'device>, vk::ImageViewType, vk::ComponentMapping)>,
-	physical_device: &'pd PhysicalDevice,
-	device: &'device Device,
+pub struct MemoryAllocator<'vk_core> {
+	vk_core: &'vk_core VkCore,
 	memory_properties: vk::MemoryPropertyFlags,
+	buffer: Option<Buffer<'vk_core>>,
+	images: Vec<(Image<'vk_core>, vk::ImageViewType, vk::ComponentMapping)>,
 }
 
 /// If T is Rw, memory properties always contain HOST_VISIBLE and HOST_COHERENT.
 /// If T is NonRw, memory properties may contain HOST_VISIBLE and/or HOST_COHERENT.
 /// NonRw doesn't means that buffer data is immutable but that buffer data can't be accessed by CPU.
 /// Memory, Buffer and Images have same lifetime because they must be created by the same Device.
-pub struct MemoryBlock<'device> {
-	device: &'device Device,
+pub struct MemoryBlock<'vk_core> {
+	vk_core: &'vk_core VkCore,
 	raw_handle: vk::DeviceMemory,
-	buffer: Option<Buffer<'device>>,
-	images: Vec<Image<'device>>,
+	buffer: Option<Buffer<'vk_core>>,
+	images: Vec<Image<'vk_core>>,
 }
 
-pub struct MemoryAccessor<'memory, 'device> {
+pub struct MemoryAccessor<'memory, 'vk_core> {
 	buffer: &'memory mut [u8],
 	seeker: u64,
-	memory: &'memory MemoryBlock<'device>,
+	memory: &'memory MemoryBlock<'vk_core>,
 }
 
 #[derive(Debug)]
@@ -69,15 +66,14 @@ pub enum MemoryTypeError {
 	NotFound,
 }
 
-impl<'device> Buffer<'device> {
+impl<'vk_core> Buffer<'vk_core> {
 	pub unsafe fn uninitialized(
-		physical_device: &PhysicalDevice,
-		device: &'device Device,
+		vk_core: &'vk_core VkCore,
 		size: vk::DeviceSize,
 		usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
 	) -> Result<Self, vk::Result> {
-		let raw_handle = device.create_buffer(
+		let raw_handle = vk_core.device.create_buffer(
 			&vk::BufferCreateInfo {
 				s_type: StructureType::BUFFER_CREATE_INFO,
 				p_next: ptr::null(),
@@ -85,15 +81,15 @@ impl<'device> Buffer<'device> {
 				size,
 				usage,
 				sharing_mode,
-				queue_family_index_count: 1,
-				p_queue_family_indices: physical_device.queue_family_index_ptr(),
+				queue_family_index_count: vk_core.physical_device.queue_family_index_count(),
+				p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
 			},
 			None,
 		)?;
 
 		Ok(
 			Self {
-				device,
+				vk_core,
 				raw_handle,
 				range: 0..0,
 			}
@@ -114,15 +110,14 @@ impl<'device> Buffer<'device> {
 impl Drop for Buffer<'_> {
 	fn drop(&mut self) {
 		unsafe {
-			self.device.destroy_buffer(self.raw_handle, None);
+			self.vk_core.device.destroy_buffer(self.raw_handle, None);
 		}
 	}
 }
 
-impl<'device> Image<'device> {
+impl<'vk_core> Image<'vk_core> {
 	pub unsafe fn uninitialized(
-		physical_device: &PhysicalDevice,
-		device: &'device Device,
+		vk_core: &'vk_core VkCore,
 		extent: vk::Extent3D,
 		format: vk::Format,
 		usage: vk::ImageUsageFlags,
@@ -134,7 +129,7 @@ impl<'device> Image<'device> {
 		array_layers: u32,
 		image_type: vk::ImageType,
 	) -> Self {
-		let image = device
+		let image = vk_core.device
 			.create_image(
 				&vk::ImageCreateInfo {
 					s_type: StructureType::IMAGE_CREATE_INFO,
@@ -150,15 +145,15 @@ impl<'device> Image<'device> {
 					image_type,
 					mip_levels,
 					array_layers,
-					queue_family_index_count: 1,
-					p_queue_family_indices: &physical_device.queue_family_index as *const _,
+					queue_family_index_count: vk_core.physical_device.queue_family_index_count(),
+					p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
 				},
 				None,
 			)
 			.unwrap();
 
 		Self {
-			device,
+			vk_core,
 			raw_handle: image,
 			view: vk::ImageView::null(),
 			extent,
@@ -167,40 +162,6 @@ impl<'device> Image<'device> {
 			aspect_mask,
 			mip_levels,
 			array_layers,
-		}
-	}
-
-	pub fn attach_image_view(
-		&mut self,
-		device: &Device,
-		view_type: vk::ImageViewType,
-		component_mapping: vk::ComponentMapping,
-	) {
-		unsafe {
-			debug_assert_eq!(self.view, vk::ImageView::null());
-			let image_view = device
-				.create_image_view(
-					&vk::ImageViewCreateInfo {
-						s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
-						p_next: ptr::null(),
-						flags: vk::ImageViewCreateFlags::empty(),
-						image: self.raw_handle,
-						format: self.format,
-						subresource_range: vk::ImageSubresourceRange {
-							aspect_mask: self.aspect_mask,
-							base_mip_level: 0,
-							level_count: self.mip_levels,
-							base_array_layer: 0,
-							layer_count: self.array_layers,
-						},
-						view_type,
-						components: component_mapping,
-					},
-					None,
-				)
-				.unwrap();
-
-			self.view = image_view;
 		}
 	}
 
@@ -263,120 +224,145 @@ impl<'device> Image<'device> {
 impl Drop for Image<'_> {
 	fn drop(&mut self) {
 		unsafe {
-			self.device.destroy_image(self.raw_handle, None);
+			self.vk_core.device.destroy_image(self.raw_handle, None);
 			if self.view != vk::ImageView::null() {
-				self.device.destroy_image_view(self.view, None);
+				self.vk_core.device.destroy_image_view(self.view, None);
 			}
 		}
 	}
 }
 
-impl MemoryAllocator<'_, '_> {
-	pub fn bind_buffer(mut self, buffer: Buffer) -> Self {
+impl<'vk_core> MemoryAllocator<'vk_core> {
+	pub fn bind_buffer(&mut self, buffer: Buffer<'vk_core>) -> &mut Self {
 		debug_assert!(self.buffer.is_none());
 		self.buffer = Some(buffer);
 		self
 	}
 
 	pub fn bind_image(
-		mut self,
-		image: Image,
+		&mut self,
+		image: Image<'vk_core>,
 		view_type: vk::ImageViewType,
 		component_mapping: vk::ComponentMapping,
-	) -> Self {
+	) -> &mut Self {
 		self.images.push((image, view_type, component_mapping));
 		self
 	}
 
 	/// This method is unsafe because inner data is uninitialized.
-	pub unsafe fn allocate(self) -> Result<MemoryBlock, Box<dyn Error>> {
+	pub unsafe fn allocate(self) -> Result<MemoryBlock<'vk_core>, Box<dyn Error>> {
 		let obj_num = self.images.len() + if self.buffer.is_some() { 1 } else { 0 };
 		debug_assert!(obj_num > 0);
 		let mut memory_requirements = Vec::with_capacity(obj_num);
-		if self.buffer.is_some() { memory_requirements.push() }
+		self.buffer.as_ref().map(|buffer| {
+			memory_requirements.push(
+				self.vk_core.device.get_buffer_memory_requirements(buffer.raw_handle)
+			);
+		});
 
-		unimplemented!()
+		self.images.iter().for_each(|(image, _, _)| {
+			memory_requirements.push(
+				self.vk_core.device.get_image_memory_requirements(image.raw_handle)
+			);
+		});
+
+		let (allocation_size, offsets, required_memory_type) = memory_requirements
+			.into_iter()
+			.fold(
+				(0, Vec::with_capacity(obj_num), !0),
+				|(alloc_size, mut offsets, req_mem_ty), mem_req| {
+					dbg!(mem_req);
+					offsets.push(alloc_size);
+					(alloc_size + mem_req.size, offsets, req_mem_ty & mem_req.memory_type_bits)
+				}
+			);
+
+		let memory = self.vk_core.device.allocate_memory(
+			&vk::MemoryAllocateInfo {
+				s_type: StructureType::MEMORY_ALLOCATE_INFO,
+				p_next: ptr::null(),
+				allocation_size,
+				memory_type_index: find_memory_type_index(
+					&self.vk_core.physical_device,
+					required_memory_type,
+					self.memory_properties,
+				)?,
+			},
+			None,
+		)?;
+
+		let mut offset_index = 0;
+		for buffer in self.buffer.iter() {
+			self.vk_core.device.bind_buffer_memory(buffer.raw_handle, memory, 0)?;
+			offset_index += 1;
+		}
+
+		for (image, _, _) in self.images.iter() {
+			self.vk_core.device.bind_image_memory(image.raw_handle, memory, offsets[offset_index])?;
+			offset_index += 1;
+		}
+
+		let mut images = Vec::with_capacity(self.images.len());
+		for (mut image, view_type, component_mapping) in self.images.into_iter() {
+			let image_view = self.vk_core.device.create_image_view(
+				&vk::ImageViewCreateInfo {
+					s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+					p_next: ptr::null(),
+					flags: vk::ImageViewCreateFlags::empty(),
+					image: image.raw_handle,
+					format: image.format,
+					subresource_range: vk::ImageSubresourceRange {
+						aspect_mask: image.aspect_mask,
+						base_mip_level: 0,
+						level_count: image.mip_levels,
+						base_array_layer: 0,
+						layer_count: image.array_layers,
+					},
+					view_type,
+					components: component_mapping,
+				},
+				None,
+			)?;
+
+			debug_assert_ne!(image.view, vk::ImageView::null());
+			image.view = image_view;
+			images.push(image);
+		}
+
+		Ok(
+			MemoryBlock {
+				vk_core: self.vk_core,
+				raw_handle: memory,
+				buffer: self.buffer,
+				images,
+			}
+		)
 	}
 }
 
-impl<'device> MemoryBlock<'device> {
-	pub fn allocator<'pd>(
-		physical_device: &'pd PhysicalDevice,
-		device: &'device Device,
+impl<'vk_core> MemoryBlock<'vk_core> {
+	pub fn allocator(
+		vk_core: &'vk_core VkCore,
 		memory_properties: vk::MemoryPropertyFlags,
-	) -> MemoryAllocator<'pd, 'device> {
+	) -> MemoryAllocator<'vk_core> {
 		MemoryAllocator {
-			physical_device,
+			vk_core,
 			buffer: None,
 			images: Vec::new(),
 			memory_properties,
 		}
 	}
 
-	pub unsafe fn uninitialized(
-		physical_device: &PhysicalDevice,
-		device: &'device Device,
-		mut buffer: Buffer,
-		images: Vec<Image>,
-		memory_properties: vk::MemoryPropertyFlags,
-	) -> Result<Self, Box<dyn Error>> {
-		let mut memory_requirements = Vec::with_capacity(images.len() + 1);
-		memory_requirements.push(device.get_buffer_memory_requirements(buffer.raw_handle));
-		images.iter().for_each(|image| {
-			memory_requirements.push(device.get_image_memory_requirements(image.raw_handle));
-		});
-
-		let (allocation_size, offsets, required_memory_type) = memory_requirements
-			.into_iter()
-			.fold(
-				(0, Vec::with_capacity(images.len() + 1), 0),
-				|(alloc_size, mut offsets, req_mem_ty), mem_req| {
-					offsets.push(alloc_size);
-					(alloc_size + mem_req.size, offsets, req_mem_ty & mem_req.memory_type_bits)
-				}
-			);
-
-		let memory = device.allocate_memory(
-			&vk::MemoryAllocateInfo {
-				s_type: StructureType::MEMORY_ALLOCATE_INFO,
-				p_next: ptr::null(),
-				allocation_size,
-				memory_type_index: find_memory_type_index(
-					physical_device,
-					required_memory_type,
-					memory_properties,
-				)?,
-			},
-			None,
-		)?;
-
-		images[..buffer_pos]
-			.iter()
-			.zip(offsets[..buffer_pos].iter())
-			.for_each(|(image, &offset)| {
-				device.bind_image_memory(image.raw_handle, memory, offset)?;
-			});
-		device.bind_buffer_memory(buffer.raw_handle, memory, offsets[buffer_pos]);
-		buffer.range = offsets[buffer_pos]..offsets[buffer_pos + 1];
-		images[buffer_pos..]
-			.iter()
-			.zip(offsets[buffer_pos + 1..].iter())
-			.for_each(|(image, &offset)| {
-				device.bind_image_memory(image.raw_handle, memory, offset)?;
-			});
-
-		Ok(
-			Self {
-				device,
-				buffer,
-				images,
-				raw_handle: memory,
-			}
-		)
-	}
-
 	pub fn accessor(&mut self) {
 		unimplemented!()
+	}
+}
+
+impl Drop for MemoryBlock<'_> {
+	fn drop(&mut self) {
+		unsafe {
+			self.vk_core.device.free_memory(self.raw_handle, None);
+		}
 	}
 }
 

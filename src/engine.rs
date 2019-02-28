@@ -1,11 +1,8 @@
-use ash::vk::Result as VkResult;
 use ash::vk;
 
-use crate::vulkan_api::*;
-use crate::vulkan_api::gui::*;
-use crate::linear_algebra::*;
-use crate::gui::*;
+use crate::vulkan::*;
 use crate::interaction::*;
+use crate::linear_algebra::*;
 
 use winit::*;
 use winit::dpi::PhysicalSize;
@@ -13,27 +10,15 @@ use winit::dpi::PhysicalSize;
 use std::error::Error;
 use std::time::*;
 
-pub struct Engine {
-	vulkan: Vulkan,
-	window: Window,
-	events_loop: EventsLoop,
-}
+pub struct Engine;
 
 impl Engine {
-	pub fn new() -> Self {
-		let (window, events_loop) = Self::create_window();
-		let vulkan = Self::init_vulkan(&window);
+	pub fn run() {
+		let (window, mut events_loop) = Engine::create_window();
+		let vk_core = VkCore::new(&window);
+		let mut vk_graphic = VkGraphic::new(&vk_core);
 
-		dbg!("engine started.");
-		Self {
-			vulkan,
-			window,
-			events_loop,
-		}
-	}
-
-	pub fn run(&mut self) {
-		self.start_menu();
+		Engine::start_menu(&vk_core, &mut vk_graphic, &window, &mut events_loop);
 	}
 }
 
@@ -52,67 +37,38 @@ impl Engine {
 		(window, events_loop)
 	}
 
-	fn init_vulkan(window: &Window) -> Vulkan {
-		Vulkan::new(window)
-	}
+	fn start_menu(
+		vk_core: &VkCore,
+		vk_graphic: &mut VkGraphic,
+		window: &Window,
+		events_loop: &mut EventsLoop,
+	) {
+		let mut interaction_devices = InteractionDevices::new(window);
+		let mut alloc = MemoryBlock::allocator(vk_core, vk::MemoryPropertyFlags::DEVICE_LOCAL);
+		alloc.bind_buffer(unsafe {
+			Buffer::uninitialized(
+				vk_core,
+				128,
+				vk::BufferUsageFlags::VERTEX_BUFFER,
+				vk::SharingMode::EXCLUSIVE,
+			).unwrap()
+		});
+		let memory = unsafe { alloc.allocate().unwrap() };
 
-	fn start_menu(&mut self) {
-		let mut interaction_devices = InteractionDevices::new(&self.window);
-
-		self.vulkan.queue_wait_idle();
-
-		let mut system_time = SystemTime::now();
-		let mut counter = 0_u64;
 		loop {
-			let result = self.vulkan.begin_frame();
-			let graphic_cmd_recorder = match result {
-				Ok(cmd) => cmd,
-				Err(VkResult::ERROR_OUT_OF_DATE_KHR) | Err(VkResult::SUBOPTIMAL_KHR) => {
-					self.vulkan.deal_with_window_resize();
-					continue;
-				},
-				Err(err) => panic!("{}", err.description()),
-			};
-
-			let command_recorder = graphic_cmd_recorder
-				.begin_recording()
-				.begin_render_pass(&self.vulkan.default_clear_value())
-				.enter_gui_pipeline()
-				.quit_gui_pipeline()
-				.end_render_pass()
-				.end_recording();
-
-			let result = self.vulkan.end_frame(command_recorder);
-			match result {
-				Ok(()) => (),
-				Err(VkResult::ERROR_OUT_OF_DATE_KHR) | Err(VkResult::SUBOPTIMAL_KHR) => {
-					self.vulkan.deal_with_window_resize();
-					continue;
-				},
-				Err(err) => panic!("{}", err.description()),
-			}
-
 			let mut close_requested = false;
-			self.events_loop.poll_events(|event| {
+			events_loop.poll_events(|event| {
 				interaction_devices.event_update(&event);
 				match event {
 					Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
 						close_requested = true;
-					},
+					}
 					_ => (),
 				}
 			});
-
-			if close_requested {
-				break;
-			}
+			if close_requested { break; }
 
 			interaction_devices.clear();
-			if counter % 1_000 == 0 {
-				eprintln!("{}", 1_000_000_000_f32 / system_time.elapsed().unwrap().subsec_micros() as f32);
-				system_time = SystemTime::now();
-			}
-			counter += 1;
 		}
 	}
 }
