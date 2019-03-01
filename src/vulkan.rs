@@ -1,4 +1,5 @@
 mod buf_image_mem;
+mod cmd_buf;
 mod shaders;
 
 pub use crate::vulkan::buf_image_mem::{Buffer, Image, MemoryBlock};
@@ -23,7 +24,6 @@ use winit::Window;
 use std::ptr;
 use std::ffi::CString;
 use std::default::Default;
-use std::ops::{Index, IndexMut};
 
 
 pub struct PhysicalDevice {
@@ -72,16 +72,6 @@ pub struct VkGraphic<'vk_core> {
 	render_pass: vk::RenderPass,
 	shaders: Shaders,
 	framebuffers: Vec<vk::Framebuffer>,
-}
-
-struct Semaphores {
-	image_acquired: vk::Semaphore,
-	render_finished: Vec<vk::Semaphore>,
-}
-
-struct Commandbuffers {
-	pool: vk::CommandPool,
-	raw_buffers: Vec<vk::CommandBuffer>,
 }
 
 impl PhysicalDevice {
@@ -507,19 +497,6 @@ impl Drop for VkGraphic<'_> {
 //				.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
 		}
 		eprintln!("Dropped VkGraphic.");
-	}
-}
-
-impl Index<usize> for Commandbuffers {
-	type Output = vk::CommandBuffer;
-	fn index(&self, index: usize) -> &vk::CommandBuffer {
-		&self.raw_buffers[index]
-	}
-}
-
-impl IndexMut<usize> for Commandbuffers {
-	fn index_mut(&mut self, index: usize) -> &mut vk::CommandBuffer {
-		&mut self.raw_buffers[index]
 	}
 }
 
