@@ -2,11 +2,10 @@ mod buf_image_mem;
 mod cmd_buf;
 mod shaders;
 
-pub use crate::vulkan::buf_image_mem::{Buffer, Image, MemoryBlock};
+pub use crate::vulkan::shaders::*;
+pub use crate::vulkan::buf_image_mem::*;
 
 use crate::linear_algebra::*;
-use crate::vulkan::shaders::*;
-use crate::vulkan::buf_image_mem::*;
 
 use ash::version::EntryV1_0;
 use ash::version::InstanceV1_0;
@@ -491,10 +490,10 @@ impl Drop for VkGraphic<'_> {
 				});
 			eprintln!("Dropping SwapchainKHR.");
 			self.swapchain.loader.destroy_swapchain(self.swapchain.raw_handle, None);
-//			self.vk_core.device.destroy_pipeline(self.shaders.gui.pipeline, None);
-//			self.vk_core.device.destroy_pipeline_layout(self.shaders.gui.pipeline_layout, None);
-//			self.vk_core.device
-//				.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
+			self.vk_core.device.destroy_pipeline(self.shaders.gui.pipeline, None);
+			self.vk_core.device.destroy_pipeline_layout(self.shaders.gui.pipeline_layout, None);
+			self.vk_core.device
+				.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
 		}
 		eprintln!("Dropped VkGraphic.");
 	}

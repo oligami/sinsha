@@ -1,18 +1,16 @@
-use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::vk::StructureType;
-use ash::Device;
+use ash::version::DeviceV1_0;
 
 use crate::vulkan::*;
 
 use std::io;
-use std::mem;
 use std::ptr;
 use std::fmt;
+use std::mem;
 use std::slice;
-use std::marker::PhantomData;
 use std::error::Error;
-use std::ops::{Index, IndexMut, Range};
+use std::ops::Range;
 
 pub struct LogicalBuffer<'vk_core> {
 	vk_core: &'vk_core VkCore,
@@ -20,69 +18,48 @@ pub struct LogicalBuffer<'vk_core> {
 	memory_requirements: vk::MemoryRequirements,
 }
 
-pub struct MemoryBuffer<'vk_core, 'memory> {
-	logical: LogicalBuffer<'vk_core>,
-	memory: &'memory MemoryBlock<'vk_core>,
-	range: Range<vk::DeviceSize>,
-}
-
-/// This struct must be bound to memory otherwise destructor won't run.
 pub struct Buffer<'vk_core> {
-	vk_core: &'vk_core VkCore,
-	raw_handle: vk::Buffer,
-	/// Buffer location in the bound memory.
-	/// (range.start = range.end = 0) means that this buffer is not bound to any memory.
+	logical: LogicalBuffer<'vk_core>,
 	range: Range<vk::DeviceSize>,
 }
 
-/// This struct must be bound to memory otherwise destructor won't run.
-pub struct Image<'vk_core> {
+pub struct LogicalImage<'vk_core> {
 	vk_core: &'vk_core VkCore,
 	raw_handle: vk::Image,
-	/// if view is null, this image is not bound to any memory.
-	view: vk::ImageView,
+	extent: vk::Extent3D,
 	format: vk::Format,
 	layout: Vec<vk::ImageLayout>,
-	extent: vk::Extent3D,
 	aspect_mask: vk::ImageAspectFlags,
 	mip_levels: u32,
 	array_layers: u32,
+	memory_requirements: vk::MemoryRequirements,
 }
 
-pub struct MemoryAllocator<'vk_core> {
-	vk_core: &'vk_core VkCore,
-	memory_properties: vk::MemoryPropertyFlags,
-	buffer: Option<Buffer<'vk_core>>,
-	images: Vec<(Image<'vk_core>, vk::ImageViewType, vk::ComponentMapping)>,
+pub struct Image<'vk_core> {
+	logical: LogicalImage<'vk_core>,
+	view: vk::ImageView,
+	range: Range<vk::DeviceSize>,
 }
 
-/// If T is Rw, memory properties always contain HOST_VISIBLE and HOST_COHERENT.
-/// If T is NonRw, memory properties may contain HOST_VISIBLE and/or HOST_COHERENT.
-/// NonRw doesn't means that buffer data is immutable but that buffer data can't be accessed by CPU.
-/// Memory, Buffer and Images have same lifetime because they must be created by the same Device.
 pub struct MemoryBlock<'vk_core> {
 	vk_core: &'vk_core VkCore,
 	raw_handle: vk::DeviceMemory,
-	buffer: Option<Buffer<'vk_core>>,
+	size: vk::DeviceSize,
+	properties: vk::MemoryPropertyFlags,
+	buffers: Vec<Buffer<'vk_core>>,
 	images: Vec<Image<'vk_core>>,
 }
 
-pub struct MemoryAccessor<'vk_core, 'memory> {
-	memory_block: &'memory MemoryBlock<'vk_core>,
+pub struct MemoryAccess<'vk_core, 'memory> {
+	memory_block: &'memory mut MemoryBlock<'vk_core>,
 	mapped_memory: &'memory mut [u8],
-	cursor: u64,
-	edited_ranges: Vec<vk::MappedMemoryRange>,
+	map_range: [vk::MappedMemoryRange; 1],
 }
 
 #[derive(Debug)]
-pub enum MemoryAccessError {
-	NoBuffer,
-	VkFailed(vk::Result),
-}
-
-#[derive(Debug)]
-pub enum MemoryTypeError {
-	NotFound,
+pub enum MemoryError {
+	VkResult(vk::Result),
+	MemoryTypeIndexNotFound,
 }
 
 impl<'vk_core> LogicalBuffer<'vk_core> {
@@ -90,7 +67,7 @@ impl<'vk_core> LogicalBuffer<'vk_core> {
 		vk_core: &'vk_core VkCore,
 		size: vk::DeviceSize,
 		usage: vk::BufferUsageFlags,
-		sharing_mode: vk::Sharing_mode,
+		sharing_mode: vk::SharingMode,
 	) -> Result<Self, vk::Result> {
 		unsafe {
 			let raw_handle = vk_core.device.create_buffer(
@@ -119,6 +96,7 @@ impl<'vk_core> LogicalBuffer<'vk_core> {
 		}
 	}
 
+	#[inline]
 	pub fn raw_handle(&self) -> vk::Buffer {
 		self.raw_handle
 	}
@@ -128,70 +106,36 @@ impl Drop for LogicalBuffer<'_> {
 	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_buffer(self.raw_handle, None); } }
 }
 
-impl<'vk_core> MemoryBuffer<'vk_core> {
-	pub fn accessor(&mut self) {
-		unimplemented!()
-	}
-
-	pub fn raw_handle(&self) -> vk::Buff
-}
-
 impl<'vk_core> Buffer<'vk_core> {
-	pub unsafe fn uninitialized(
-		vk_core: &'vk_core VkCore,
-		size: vk::DeviceSize,
-		usage: vk::BufferUsageFlags,
-		sharing_mode: vk::SharingMode,
-	) -> Result<Self, vk::Result> {
-		let raw_handle = vk_core.device.create_buffer(
-			&vk::BufferCreateInfo {
-				s_type: StructureType::BUFFER_CREATE_INFO,
-				p_next: ptr::null(),
-				flags: vk::BufferCreateFlags::empty(),
-				size,
-				usage,
-				sharing_mode,
-				queue_family_index_count: vk_core.physical_device.queue_family_index_count(),
-				p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
-			},
-			None,
-		)?;
-
-		Ok(Self {
-			vk_core,
-			raw_handle,
-			range: 0..0,
-		})
-	}
+	#[inline]
+	pub fn raw_handle(&self) -> vk::Buffer { self.logical.raw_handle }
 
 	#[inline]
-	pub fn size(&self) -> vk::DeviceSize {
-		self.range.end - self.range.start
-	}
+	pub fn size(&self) -> vk::DeviceSize { self.range.end - self.range.start }
 
-	#[inline]
-	pub fn bound_to_memory(&self) -> bool {
-		self.size() != 0
-	}
-
-	#[inline]
-	pub fn raw_handle(&self) -> vk::Buffer {
-		self.raw_handle
-	}
-}
-
-impl Drop for Buffer<'_> {
-	fn drop(&mut self) {
-		unsafe {
-			self.vk_core.device.destroy_buffer(self.raw_handle, None);
+	pub fn barrier(
+		&self,
+		access: (vk::AccessFlags, vk::AccessFlags),
+		range: Range<vk::DeviceSize>,
+	) -> vk::BufferMemoryBarrier {
+		vk::BufferMemoryBarrier {
+			s_type: StructureType::BUFFER_MEMORY_BARRIER,
+			p_next: ptr::null(),
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			src_access_mask: access.0,
+			dst_access_mask: access.1,
+			buffer: self.raw_handle(),
+			offset: range.start,
+			size: range.end - range.start,
 		}
-		eprintln!("Dropping Buffer.");
 	}
 }
 
-impl<'vk_core> Image<'vk_core> {
-	pub unsafe fn uninitialized(
+impl<'vk_core> LogicalImage<'vk_core> {
+	pub fn new(
 		vk_core: &'vk_core VkCore,
+		image_type: vk::ImageType,
 		extent: vk::Extent3D,
 		format: vk::Format,
 		usage: vk::ImageUsageFlags,
@@ -201,11 +145,9 @@ impl<'vk_core> Image<'vk_core> {
 		aspect_mask: vk::ImageAspectFlags,
 		mip_levels: u32,
 		array_layers: u32,
-		image_type: vk::ImageType,
-	) -> Self {
-		let image = vk_core
-			.device
-			.create_image(
+	) -> Result<Self, vk::Result> {
+		unsafe {
+			let image = vk_core.device.create_image(
 				&vk::ImageCreateInfo {
 					s_type: StructureType::IMAGE_CREATE_INFO,
 					p_next: ptr::null(),
@@ -224,31 +166,28 @@ impl<'vk_core> Image<'vk_core> {
 					p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
 				},
 				None,
-			)
-			.unwrap();
+			)?;
 
-		Self {
-			vk_core,
-			raw_handle: image,
-			view: vk::ImageView::null(),
-			extent,
-			format,
-			layout: vec![initial_layout; mip_levels as usize],
-			aspect_mask,
-			mip_levels,
-			array_layers,
+			let memory_requirements = vk_core.device.get_image_memory_requirements(image);
+
+			Ok(
+				Self {
+					vk_core,
+					raw_handle: image,
+					extent,
+					format,
+					layout: vec![initial_layout; mip_levels as usize],
+					aspect_mask,
+					mip_levels,
+					array_layers,
+					memory_requirements,
+				}
+			)
 		}
 	}
 
 	#[inline]
-	pub fn raw_handle(&self) -> vk::Image {
-		self.raw_handle
-	}
-
-	#[inline]
-	pub fn view(&self) -> vk::ImageView {
-		self.view
-	}
+	pub fn raw_handle(&self) -> vk::Image { self.raw_handle }
 
 	#[inline]
 	pub fn layout(&self, mip_level: u32) -> vk::ImageLayout {
@@ -256,31 +195,29 @@ impl<'vk_core> Image<'vk_core> {
 		self.layout[mip_level as usize]
 	}
 
-	#[inline]
 	pub fn extent(&self, mip_level: u32) -> vk::Extent3D {
 		debug_assert!(mip_level <= self.mip_levels);
-		let divider = 2_u32.pow(mip_level);
+
+		let (width, height) = (0..mip_level)
+			.fold((self.extent.width, self.extent.height), |(width, height), _| {
+				(width / 2, height / 2)
+			});
+
 		vk::Extent3D {
-			width: self.extent.width / divider,
-			height: self.extent.height / divider,
+			width,
+			height,
 			depth: self.extent.depth,
 		}
 	}
 
 	#[inline]
-	pub fn aspect_mask(&self) -> vk::ImageAspectFlags {
-		self.aspect_mask
-	}
+	pub fn aspect_mask(&self) -> vk::ImageAspectFlags { self.aspect_mask }
 
 	#[inline]
-	pub fn mip_levels(&self) -> u32 {
-		self.mip_levels
-	}
+	pub fn mip_levels(&self) -> u32 { self.mip_levels }
 
 	#[inline]
-	pub fn array_layers(&self) -> u32 {
-		self.array_layers
-	}
+	pub fn array_layers(&self) -> u32 { self.array_layers }
 
 	pub fn maximum_mip_level(width: u32, height: u32) -> u32 {
 		[width, height]
@@ -289,187 +226,256 @@ impl<'vk_core> Image<'vk_core> {
 			.min()
 			.unwrap_or(1)
 	}
+}
+
+impl Drop for LogicalImage<'_> {
+	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_image(self.raw_handle, None); } }
+}
+
+impl<'vk_core> Image<'vk_core> {
+	#[inline]
+	pub fn raw_handle(&self) -> vk::Image { self.logical.raw_handle }
 
 	#[inline]
-	pub fn bound_to_memory(&self) -> bool {
-		unimplemented!()
+	pub fn view(&self) -> vk::ImageView { self.view }
+
+	#[inline]
+	pub fn layout(&self, mip_level: u32) -> vk::ImageLayout { self.logical.layout(mip_level) }
+
+	#[inline]
+	pub fn extent(&self, mip_level: u32) -> vk::Extent3D { self.logical.extent(mip_level) }
+
+	#[inline]
+	pub fn aspect_mask(&self) -> vk::ImageAspectFlags { self.logical.aspect_mask }
+
+	#[inline]
+	pub fn mip_levels(&self) -> u32 { self.logical.mip_levels }
+
+	#[inline]
+	pub fn array_layers(&self) -> u32 { self.logical.array_layers }
+
+	#[inline]
+	pub fn transit_layout(
+		&mut self,
+		mip_level: u32,
+		new_layout: vk::ImageLayout,
+	) -> vk::ImageLayout {
+		mem::replace(&mut self.logical.layout[mip_level as usize], new_layout)
+	}
+
+	pub fn barrier(
+		&mut self,
+		(mip_level_range, array_layer_range): (Range<u32>, Range<u32>),
+		new_layout: vk::ImageLayout,
+		access: (vk::AccessFlags, vk::AccessFlags),
+	) -> (&mut Self, vk::ImageMemoryBarrier) {
+		debug_assert!(mip_level_range.end < self.mip_levels());
+		debug_assert!(array_layer_range.end < self.array_layers());
+		let barrier_info = vk::ImageMemoryBarrier {
+			s_type: StructureType::BUFFER_MEMORY_BARRIER,
+			p_next: ptr::null(),
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			src_access_mask: access.0,
+			dst_access_mask: access.1,
+			image: self.raw_handle(),
+			old_layout: self.layout(mip_level_range.start),
+			new_layout,
+			subresource_range: vk::ImageSubresourceRange {
+				aspect_mask: self.aspect_mask(),
+				base_mip_level: mip_level_range.start,
+				level_count: mip_level_range.end - mip_level_range.start,
+				base_array_layer: array_layer_range.start,
+				layer_count: array_layer_range.end - array_layer_range.start,
+			},
+		};
+
+		(self, barrier_info)
 	}
 }
 
 impl Drop for Image<'_> {
 	fn drop(&mut self) {
-		unsafe {
-			self.vk_core.device.destroy_image(self.raw_handle, None);
-			if self.view != vk::ImageView::null() {
-				self.vk_core.device.destroy_image_view(self.view, None);
-			}
-		}
-
-		eprintln!("Dropping Image.");
-	}
-}
-
-impl<'vk_core> MemoryAllocator<'vk_core> {
-	pub fn bind_buffer(&mut self, buffer: Buffer<'vk_core>) -> &mut Self {
-		debug_assert!(self.buffer.is_none());
-		self.buffer = Some(buffer);
-		self
-	}
-
-	pub fn bind_image(
-		&mut self,
-		image: Image<'vk_core>,
-		view_type: vk::ImageViewType,
-		component_mapping: vk::ComponentMapping,
-	) -> &mut Self {
-		self.images.push((image, view_type, component_mapping));
-		self
-	}
-
-	/// This method is unsafe because inner data is uninitialized.
-	pub unsafe fn allocate(mut self) -> Result<MemoryBlock<'vk_core>, Box<dyn Error>> {
-		let obj_num = self.images.len() + if self.buffer.is_some() { 1 } else { 0 };
-		debug_assert!(obj_num > 0);
-		let mut memory_requirements = Vec::with_capacity(obj_num);
-		self.buffer.iter().for_each(|buffer| {
-			memory_requirements.push(
-				self.vk_core
-					.device
-					.get_buffer_memory_requirements(buffer.raw_handle),
-			);
-		});
-
-		self.images.iter().for_each(|(image, _, _)| {
-			memory_requirements.push(
-				self.vk_core
-					.device
-					.get_image_memory_requirements(image.raw_handle),
-			);
-		});
-
-		let (allocation_size, required_memory_type) =
-			memory_requirements
-				.iter()
-				.fold((0, !0), |(alloc_size, req_mem_ty), mem_req| {
-					dbg!(mem_req);
-					(
-						alloc_size + mem_req.size,
-						req_mem_ty & mem_req.memory_type_bits,
-					)
-				});
-
-		let memory = self.vk_core.device.allocate_memory(
-			&vk::MemoryAllocateInfo {
-				s_type: StructureType::MEMORY_ALLOCATE_INFO,
-				p_next: ptr::null(),
-				allocation_size,
-				memory_type_index: find_memory_type_index(
-					&self.vk_core.physical_device,
-					required_memory_type,
-					self.memory_properties,
-				)?,
-			},
-			None,
-		)?;
-
-		let mut offset = 0;
-		let mut mem_req_idx = 0;
-		for buffer in self.buffer.iter_mut() {
-			self.vk_core
-				.device
-				.bind_buffer_memory(buffer.raw_handle, memory, offset)?;
-			offset += memory_requirements[mem_req_idx].size;
-			buffer.range.end = offset;
-			mem_req_idx += 1;
-		}
-
-		for (image, _, _) in self.images.iter() {
-			self.vk_core
-				.device
-				.bind_image_memory(image.raw_handle, memory, offset)?;
-			offset += memory_requirements[mem_req_idx].size;
-			mem_req_idx += 1;
-		}
-
-		let mut images = Vec::with_capacity(self.images.len());
-		for (mut image, view_type, component_mapping) in self.images.into_iter() {
-			let image_view = self.vk_core.device.create_image_view(
-				&vk::ImageViewCreateInfo {
-					s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
-					p_next: ptr::null(),
-					flags: vk::ImageViewCreateFlags::empty(),
-					image: image.raw_handle,
-					format: image.format,
-					subresource_range: vk::ImageSubresourceRange {
-						aspect_mask: image.aspect_mask,
-						base_mip_level: 0,
-						level_count: image.mip_levels,
-						base_array_layer: 0,
-						layer_count: image.array_layers,
-					},
-					view_type,
-					components: component_mapping,
-				},
-				None,
-			)?;
-
-			debug_assert_ne!(image.view, vk::ImageView::null());
-			image.view = image_view;
-			images.push(image);
-		}
-
-		Ok(MemoryBlock {
-			vk_core: self.vk_core,
-			raw_handle: memory,
-			buffer: self.buffer,
-			images,
-		})
+		unsafe { self.logical.vk_core.device.destroy_image_view(self.view, None); }
 	}
 }
 
 impl<'vk_core> MemoryBlock<'vk_core> {
-	pub fn allocator(
+	pub fn new(
 		vk_core: &'vk_core VkCore,
+		logical_buffers: Vec<LogicalBuffer<'vk_core>>,
+		logical_images: Vec<(LogicalImage<'vk_core>, vk::ImageViewType, vk::ComponentMapping)>,
 		memory_properties: vk::MemoryPropertyFlags,
-	) -> MemoryAllocator<'vk_core> {
-		MemoryAllocator {
-			vk_core,
-			buffer: None,
-			images: Vec::new(),
-			memory_properties,
-		}
-	}
-
-	pub fn accessor<'memory>(
-		&'memory self
-	) -> Result<MemoryAccessor<'vk_core, 'memory>, MemoryAccessError> {
+	) -> Result<Self, MemoryError> {
 		unsafe {
-			self.buffer
-				.as_ref()
-				.map(|buffer| {
-					let ptr = self
-						.vk_core
-						.device
-						.map_memory(
-							self.raw_handle,
-							buffer.range.start,
-							buffer.size(),
-							vk::MemoryMapFlags::empty(),
-						)
-						.map_err(|vk_err| MemoryAccessError::VkFailed(vk_err))?
-						as *mut u8;
+			let mut mem_reqs = Vec::with_capacity(logical_buffers.len() + logical_images.len());
+			logical_buffers
+				.iter()
+				.for_each(|logical_buffer| mem_reqs.push(logical_buffer.memory_requirements));
+			logical_images
+				.iter()
+				.for_each(|(logical_image, _, _)| mem_reqs.push(logical_image.memory_requirements));
 
-					Ok(slice::from_raw_parts_mut(ptr, buffer.size() as usize))
-				})
-				.ok_or(MemoryAccessError::NoBuffer)?
-				.map(|mapped_memory| MemoryAccessor {
-					memory_block: self,
-					mapped_memory,
-					cursor: 0,
-					edited_ranges: Vec::new(),
-				})
+
+			let (allocation_size, required_memory_type_bits) = mem_reqs
+				.into_iter()
+				.fold((0, !0), |(size, mem_ty), mem_req| {
+					(size + mem_req.size, mem_ty & mem_req.memory_type_bits)
+				});
+
+			debug_assert!(allocation_size > 0);
+			debug_assert_ne!(required_memory_type_bits, 0);
+
+			let raw_handle = vk_core.device
+				.allocate_memory(
+					&vk::MemoryAllocateInfo {
+						s_type: StructureType::MEMORY_ALLOCATE_INFO,
+						p_next: ptr::null(),
+						allocation_size,
+						memory_type_index: find_memory_type_index(
+							&vk_core.physical_device,
+							required_memory_type_bits,
+							memory_properties,
+						)?,
+					},
+					None,
+				)
+				.map_err(|vk_err| MemoryError::VkResult(vk_err))?;
+
+			let mut memory_block = Self {
+				vk_core,
+				raw_handle,
+				size: allocation_size,
+				properties: memory_properties,
+				buffers: Vec::with_capacity(logical_buffers.len()),
+				images: Vec::with_capacity(logical_images.len()),
+			};
+
+			let mut offset = 0;
+			for logical_buffer in logical_buffers.into_iter() {
+				let buffer = memory_block
+					.bind_buffer(logical_buffer, &mut offset)
+					.map_err(|vk_err| MemoryError::VkResult(vk_err))?;
+				memory_block.buffers.push(buffer);
+			}
+			for (logical_image, view_type, components) in logical_images.into_iter() {
+				let image = memory_block
+					.bind_image(
+						logical_image,
+						view_type,
+						components,
+						&mut offset,
+					)
+					.map_err(|vk_err| MemoryError::VkResult(vk_err))?;
+				memory_block.images.push(image);
+			}
+
+			Ok(memory_block)
 		}
 	}
+
+	unsafe fn bind_buffer(
+		&self,
+		logical_buffer: LogicalBuffer<'vk_core>,
+		offset: &mut vk::DeviceSize,
+	) -> Result<Buffer<'vk_core>, vk::Result> {
+		let range = *offset..*offset + logical_buffer.memory_requirements.size;
+		debug_assert!(range.end <= self.size);
+		self.vk_core.device
+			.bind_buffer_memory(logical_buffer.raw_handle, self.raw_handle, *offset)?;
+
+		*offset = range.end;
+		Ok(
+			Buffer {
+				logical: logical_buffer,
+				range,
+			}
+		)
+	}
+
+	unsafe fn bind_image(
+		&self,
+		logical_image: LogicalImage<'vk_core>,
+		view_type: vk::ImageViewType,
+		components: vk::ComponentMapping,
+		offset: &mut vk::DeviceSize,
+	) -> Result<Image<'vk_core>, vk::Result> {
+		let range = *offset..*offset + logical_image.memory_requirements.size;
+		debug_assert!(range.end <= self.size);
+		self.vk_core.device
+			.bind_image_memory(logical_image.raw_handle, self.raw_handle, *offset)?;
+		let view = self.vk_core.device
+			.create_image_view(
+				&vk::ImageViewCreateInfo {
+					s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+					p_next: ptr::null(),
+					flags: vk::ImageViewCreateFlags::empty(),
+					image: logical_image.raw_handle,
+					format: logical_image.format,
+					subresource_range: vk::ImageSubresourceRange {
+						aspect_mask: logical_image.aspect_mask,
+						base_mip_level: 0,
+						level_count: logical_image.mip_levels,
+						base_array_layer: 0,
+						layer_count: logical_image.array_layers,
+					},
+					view_type,
+					components,
+				},
+				None,
+			)?;
+
+		*offset = range.end;
+		Ok(
+			Image {
+				logical: logical_image,
+				view,
+				range,
+			}
+		)
+	}
+
+	pub fn buffer_access<'memory>(
+		&'memory mut self,
+		idx: usize,
+		map_range: Range<vk::DeviceSize>,
+	) -> Result<MemoryAccess<'vk_core, 'memory>, vk::Result> {
+		unsafe {
+			debug_assert!(map_range.end <= self.ref_buffer(idx).size());
+
+			let size = map_range.end - map_range.start;
+			let ptr = self.vk_core.device
+				.map_memory(self.raw_handle, map_range.start, size, vk::MemoryMapFlags::empty(), )?
+				as *mut u8;
+
+			let map_range = [vk::MappedMemoryRange {
+				s_type: StructureType::MAPPED_MEMORY_RANGE,
+				p_next: ptr::null(),
+				memory: self.raw_handle,
+				offset: map_range.start,
+				size,
+			}];
+
+			Ok(
+				MemoryAccess {
+					memory_block: self,
+					mapped_memory: slice::from_raw_parts_mut(ptr, size as usize),
+					map_range,
+				}
+			)
+		}
+	}
+
+	#[inline]
+	pub fn ref_buffer(&self, idx: usize) -> &Buffer { &self.buffers[idx] }
+	#[inline]
+	pub fn ref_image(&self, idx: usize) -> &Image { &self.images[idx] }
+	#[inline]
+	pub fn buffer_iter(&self) -> slice::Iter<Buffer> { self.buffers.iter() }
+	#[inline]
+	pub fn image_iter(&self) -> slice::Iter<Image> { self.images.iter() }
+	#[inline]
+	pub fn image_iter_mut(&mut self) -> slice::IterMut<Image<'vk_core>> { self.images.iter_mut() }
 }
 
 impl Drop for MemoryBlock<'_> {
@@ -482,100 +488,52 @@ impl Drop for MemoryBlock<'_> {
 	}
 }
 
-impl io::Read for MemoryAccessor<'_, '_> {
+impl io::Read for MemoryAccess<'_, '_> {
 	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-		let read_bytes = io::Read::read(&mut &self.mapped_memory[self.cursor as usize..], buf)?;
-		self.cursor += read_bytes as u64;
-		Ok(read_bytes)
+		Ok(io::Read::read(&mut &self.mapped_memory[..], buf)?)
 	}
 }
 
-impl io::Seek for MemoryAccessor<'_, '_> {
-	fn seek(&mut self, seek_from: io::SeekFrom) -> io::Result<u64> {
-		match seek_from {
-			io::SeekFrom::Start(n) => self.cursor = n,
-			io::SeekFrom::Current(n) => self.cursor = (self.cursor as i64 + n) as u64,
-			io::SeekFrom::End(n) => self.cursor = (self.mapped_memory.len() as i64 + n) as u64,
-		}
-
-		Ok(self.cursor)
-	}
-}
-
-impl io::Write for MemoryAccessor<'_, '_> {
+impl io::Write for MemoryAccess<'_, '_> {
 	fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-		let written_bytes = io::Write::write(&mut self.mapped_memory, buf)?;
-		self.edited_ranges.push(vk::MappedMemoryRange {
-			s_type: StructureType::MAPPED_MEMORY_RANGE,
-			p_next: ptr::null(),
-			memory: self.memory_block.raw_handle,
-			offset: self.cursor,
-			size: written_bytes as u64,
-		});
-
-		Ok(written_bytes)
+		Ok(io::Write::write(&mut self.mapped_memory, buf)?)
 	}
 
 	fn flush(&mut self) -> io::Result<()> {
 		unsafe {
-			self.memory_block
-				.vk_core
-				.device
-				.flush_mapped_memory_ranges(&self.edited_ranges[..])
+			self.memory_block.vk_core.device
+				.flush_mapped_memory_ranges(&self.map_range)
 				.map_err(|err| io::Error::new(io::ErrorKind::Other, err))?;
-			self.memory_block
-				.vk_core
-				.device
-				.invalidate_mapped_memory_ranges(&self.edited_ranges[..])
+			self.memory_block.vk_core.device
+				.invalidate_mapped_memory_ranges(&self.map_range)
 				.map_err(|err| io::Error::new(io::ErrorKind::Other, err))
 		}
 	}
 }
 
-impl Drop for MemoryAccessor<'_, '_> {
+impl Drop for MemoryAccess<'_, '_> {
 	fn drop(&mut self) {
-		unsafe {
-			self.memory_block
-				.vk_core
-				.device
-				.unmap_memory(self.memory_block.raw_handle);
-		}
+		unsafe { self.memory_block.vk_core.device.unmap_memory(self.memory_block.raw_handle); }
 	}
 }
 
-impl fmt::Display for MemoryAccessError {
+impl fmt::Display for MemoryError {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			MemoryAccessError::NoBuffer => write!(
-				f,
-				"Not found buffer.\
-                 If you want to  access to images directly, use all_accessor()."
-			),
-			MemoryAccessError::VkFailed(vk_result) => write!(f, "vk::Result: {}", vk_result),
+			MemoryError::MemoryTypeIndexNotFound
+				=> write!(f, "Not found suitable memory type index in physical device."),
+			MemoryError::VkResult(ref err) => write!(f, "vk::Result error: {}", err),
 		}
 	}
 }
 
-impl Error for MemoryAccessError {}
-
-impl fmt::Display for MemoryTypeError {
-	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		match self {
-			MemoryTypeError::NotFound => write!(
-				f,
-				"Not found suitable memory type index in physical device."
-			),
-		}
-	}
-}
-
-impl Error for MemoryTypeError {}
+impl Error for MemoryError {}
 
 fn find_memory_type_index(
 	physical_device: &PhysicalDevice,
 	required_memory_type_bits: u32,
 	required_memory_property_flags: vk::MemoryPropertyFlags,
-) -> Result<u32, MemoryTypeError> {
+) -> Result<u32, MemoryError> {
 	for i in 0..physical_device.memory_properties.memory_type_count {
 		if required_memory_type_bits & 1 << i != 0
 			&& physical_device.memory_properties.memory_types[i as usize].property_flags
@@ -585,5 +543,6 @@ fn find_memory_type_index(
 			return Ok(i);
 		}
 	}
-	Err(MemoryTypeError::NotFound)
+
+	Err(MemoryError::MemoryTypeIndexNotFound)
 }

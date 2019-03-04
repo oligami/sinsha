@@ -7,7 +7,6 @@ use crate::linear_algebra::*;
 use winit::*;
 use winit::dpi::PhysicalSize;
 
-use std::error::Error;
 use std::time::*;
 use std::io::*;
 
@@ -45,21 +44,21 @@ impl Engine {
 		events_loop: &mut EventsLoop,
 	) {
 		let mut interaction_devices = InteractionDevices::new(window);
-		let mut alloc = MemoryBlock::allocator(
+
+		let logical_buffer = LogicalBuffer::new(
 			vk_core,
-			vk::MemoryPropertyFlags::HOST_VISIBLE,
-		);
-		alloc.bind_buffer(unsafe {
-			Buffer::uninitialized(
-				vk_core,
-				1025,
-				vk::BufferUsageFlags::VERTEX_BUFFER,
-				vk::SharingMode::EXCLUSIVE,
-			).unwrap()
-		});
-		let memory = unsafe { alloc.allocate().unwrap() };
-		let mut memory_accessor = memory.accessor().unwrap();
-		memory_accessor.write(&[1; 32]).unwrap();
+			128,
+			vk::BufferUsageFlags::TRANSFER_SRC,
+			vk::SharingMode::EXCLUSIVE,
+		).unwrap();
+
+		let memory = MemoryBlock::new(
+			vk_core,
+			vec![logical_buffer],
+			vec![],
+			vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+		).unwrap();
+
 
 		loop {
 			let mut close_requested = false;

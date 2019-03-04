@@ -8,19 +8,10 @@ use crate::linear_algebra::{XY, RGBA};
 use crate::vulkan::*;
 
 use std::mem;
+use std::slice;
 use std::default::Default;
 use std::ffi::CString;
 use std::collections::HashMap;
-
-pub trait GuiDraw {
-	fn draw(
-		&self,
-		device: &Device,
-		pipeline_layout: &vk::PipelineLayout,
-		command_buffer: &Vec<vk::CommandBuffer>,
-		image_index: &usize,
-	);
-}
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
@@ -30,6 +21,8 @@ pub struct Vertex {
 	texture: XY,
 }
 
+#[repr(C)]
+struct PushConstant(RGBA, XY);
 
 #[derive(Copy, Clone, Debug)]
 pub struct Extent2D<T> {
@@ -39,19 +32,16 @@ pub struct Extent2D<T> {
 	pub left: T,
 }
 
-pub struct Rect2Ds<'device, T> where T: RwMarker {
-	/// (usize: for vertex, descriptor set, and push constant, usize: for texture)
-	tag_and_idxs: HashMap<&'static str, (usize, usize)>,
-	positions: Vec<(Extent2D<f32>, Extent2D<i32>, XY)>,
-	vertex_buffers: BufferWithMemory<'device, T>,
-	textures: ImagesWithMemory<'device>,
-	descriptor_sets: DescriptorSets,
-	push_constants: Vec<RGBA>,
-}
-
-pub struct Rect2DsBuilder {
-	builders: Vec<Rect2DBuilder>,
-	image_pathes: Vec<&'static str>,
+// 文字用に色を変えたい。
+// 動かしたい。
+// CPUから描画範囲を知りたい。
+// window resize のときに必要な情報が欲しい。原点の場所とか
+pub struct Rect2Ds<'vk_core, 'texture> {
+	positions: Vec<(Extent2D<f32>, Extent2D<i32>)>,
+	vertex_buffers: MemoryBlock<'vk_core>,
+	textures: &'texture MemoryBlock<'vk_core>,
+	descriptor_sets: DescriptorSets<'vk_core>,
+	push_constants: Vec<PushConstant>,
 }
 
 struct Rect2DBuilder {
@@ -65,17 +55,21 @@ struct Rect2DBuilder {
 	color_weight: RGBA,
 }
 
-pub struct Font<'device> {
-	image: ImagesWithMemory<'device>,
-}
-
-
 impl Default for Vertex {
 	fn default() -> Self {
 		Self {
 			color: RGBA::default(),
 			position: XY::zero(),
 			texture: XY::zero(),
+		}
+	}
+}
+
+impl AsRef<[u8]> for PushConstant {
+	fn as_ref(&self) -> &[u8] {
+		unsafe {
+			let ptr = self as *const _ as *const u8;
+			slice::from_raw_parts(ptr, mem::size_of::<RGBA>() + mem::size_of::<XY>())
 		}
 	}
 }
@@ -132,236 +126,105 @@ pub const BOTTOM_LEFT: XY = XY::new(-1.0, 1.0);
 pub const BOTTOM_CENTER: XY = XY::new(0.0, 1.0);
 pub const BOTTOM_RIGHT: XY = XY::new(1.0, 1.0);
 
-impl<'device, T> GuiDraw for Rect2Ds<'device, T> {
-	/// This function must be called,
-	/// after the command buffer has entered in the valid render pass and been bound gui pipeline.
-	/// The pipeline layout must be valid.
-	fn draw(
-		&self,
-		device: &Device,
-		pipeline_layout: &vk::PipelineLayout,
-		command_buffer: &Vec<vk::CommandBuffer>,
-		&image_index: &usize,
-	) {
-		unsafe {
-			device.cmd_bind_vertex_buffers(
-				command_buffer[image_index],
-				0,
-				&[self.vertex_buffers.raw_handle()],
-				&[0],
-			);
 
-			self.push_constants
-				.iter()
-				.enumerate()
-				.for_each(|(i, push_constant)| {
-					device.cmd_bind_descriptor_sets(
-						command_buffer[image_index],
-						vk::PipelineBindPoint::GRAPHICS,
-						*pipeline_layout,
-						0,
-						&[self.descriptor_sets.get(i, image_index)],
-						&[],
-					);
-					device.cmd_push_constants(
-						command_buffer[image_index],
-						*pipeline_layout,
-						vk::ShaderStageFlags::VERTEX,
-						0,
-						push_constant.to_ref_u8_slice(),
-					);
-					device.cmd_draw(command_buffer[image_index], 4, 1, (4 * i) as _, 0);
-				});
-		}
-	}
+
+pub struct DescriptorSets<'vk_core> {
+	vk_core: &'vk_core VkCore,
+	pool: vk::DescriptorPool,
+	sets: Vec<vk::DescriptorSet>,
+	sets_per_obj: usize,
 }
 
-impl<T> Rect2Ds<'_, T> {
-	pub fn start_builder() -> Rect2DsBuilder {
-		Rect2DsBuilder::start()
-	}
+impl<'vk_core> DescriptorSets<'vk_core> {
+	pub fn new(
+		vk_graphic: &VkGraphic<'vk_core>,
+		textures: &[(&Image<'vk_core>, vk::Sampler)],
+		sets_per_obj: usize,
+	) -> Result<Self, vk::Result> {
+		unsafe {
+			let sets_num = textures.len() * sets_per_obj;
 
-	fn from_builders(builders: Vec<Rect2DBuilder>) -> Self {
-		unimplemented!()
-	}
+			let pool_sizes = [vk::DescriptorPoolSize {
+				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+				descriptor_count: sets_per_obj as u32,
+			}];
 
-	pub fn valid_tag(&self, tag: &'static str) -> bool {
-		self.tag_and_idxs.contains_key(tag)
-	}
+			let pool = vk_graphic.vk_core.device
+				.create_descriptor_pool(
+					&vk::DescriptorPoolCreateInfo {
+						s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::DescriptorPoolCreateFlags::empty(),
+						max_sets: sets_num as u32,
+						pool_size_count: pool_sizes.len() as u32,
+						p_pool_sizes: pool_sizes.as_ptr(),
+					},
+					None,
+				)?;
 
-	pub fn extent(&self, tag: &'static str) -> Extent2D<f32> {
-		let &(idx, _) = self.tag_and_idxs.get(tag).unwrap();
-		self.positions[idx].0
-	}
+			let set_layouts = vec![vk_graphic.shaders.gui.descriptor_set_layout; sets_num];
 
-	pub fn contain(&self, tag: &'static str, point: &XY) -> bool {
-		self.extent(tag).contain(&point)
-	}
+			let sets = vk_graphic.vk_core.device
+				.allocate_descriptor_sets(
+					&vk::DescriptorSetAllocateInfo {
+						s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+						p_next: ptr::null(),
+						descriptor_pool: pool,
+						descriptor_set_count: set_layouts.len() as u32,
+						p_set_layouts: set_layouts.as_ptr(),
+					}
+				)?;
 
-	pub fn update_color_weight(&mut self, tag: &'static str, color_weight: RGBA) {
-		let &(idx, _) = self.tag_and_idxs.get(tag).unwrap();
-		self.push_constants[idx] = color_weight;
-	}
-
-	// TODO: CommandRecorder should be provided by a argument because multiple operation should be integlated in one command.
-	pub fn deal_with_window_resize(&mut self, vulkan: &VkCore) {
-		let data_infos = self.positions
-			.iter_mut()
-			.map(|(extent_f32, extent_i32, origin)| {
-				*extent_f32 = extent_i32.normalize(vulkan.swapchain.render_xy(), *origin);
-				BufferDataInfo::new(extent_f32.to_positions().to_vec())
-			})
-			.collect();
-
-		let staging_buffers = BufferWithMemory::visible_coherent(
-			&vulkan.physical_device,
-			&vulkan.device,
-			data_infos,
-			vk::BufferUsageFlags::TRANSFER_SRC,
-			vk::SharingMode::EXCLUSIVE,
-			vk::MemoryPropertyFlags::empty(),
-		);
-
-		let (_, _, region_infos) = (0..self.positions.len() * 4)
-			.fold(
-				(0, mem::size_of::<RGBA>() as _, Vec::with_capacity(self.positions.len() * 4)),
-				|(src_offset, dst_offset, mut region_infos), _| {
-					region_infos.push(
-						vk::BufferCopy {
-							src_offset,
-							dst_offset,
-							size: mem::size_of::<XY>() as _,
+			let image_writes: Vec<_> = textures
+				.iter()
+				.map(|(image, sampler)| vk::DescriptorImageInfo {
+					image_view: image.view(),
+					image_layout: image.layout(0),
+					sampler: *sampler,
+				})
+				.collect();
+			let mut write_sets = Vec::with_capacity(sets_num);
+			for (image_write, sets) in image_writes.iter().zip(sets.chunks(sets_per_obj)) {
+				for &set in sets.iter() {
+					write_sets.push(
+						vk::WriteDescriptorSet {
+							s_type: StructureType::WRITE_DESCRIPTOR_SET,
+							p_next: ptr::null(),
+							dst_set: set,
+							dst_binding: 0,
+							dst_array_element: 0,
+							descriptor_count: 1,
+							descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+							p_image_info: image_write as *const _,
+							p_buffer_info: ptr::null(),
+							p_texel_buffer_view: ptr::null(),
 						}
 					);
-
-					(
-						src_offset + mem::size_of::<XY>() as vk::DeviceSize,
-						dst_offset + mem::size_of::<Vertex>() as vk::DeviceSize,
-						region_infos
-					)
 				}
-			);
+			}
+			vk_graphic.vk_core.device.update_descriptor_sets(&write_sets[..], &[]);
 
-		let mut command_recorder = vulkan
-			.command_recorder()
-			.begin_recording();
-
-		command_recorder.transfer(&staging_buffers, &self.vertex_buffers, &region_infos[..]);
-
-		let command_recorded = command_recorder.end_recording();
-
-		vulkan.submit_command_recorder(
-			&command_recorded,
-			vk::PipelineStageFlags::empty(),
-			&[],
-			&[],
-			&vk::Fence::null()
-		);
-
-		vulkan.queue_wait_idle();
-	}
-}
-
-impl Rect2DsBuilder {
-	pub fn start() -> Self {
-		Self {
-			builders: Vec::new(),
-			image_pathes: Vec::new(),
+			Ok(
+				Self {
+					vk_core: vk_graphic.vk_core,
+					pool,
+					sets,
+					sets_per_obj,
+				}
+			)
 		}
 	}
 
-	pub fn next(
-		mut self,
-		tag: &'static str,
-		image_path: &'static str,
-		sampler: vk::Sampler,
-	) -> Self {
-		self.builders.push(
-			Rect2DBuilder {
-				tag,
-				extent: Extent2D::default(),
-				origin: CENTER,
-				color: [RGBA::default(); 4],
-				tex_coord: [
-					XY::new(0_f32, 0_f32),
-					XY::new(0_f32, 1_f32),
-					XY::new(1_f32, 1_f32),
-					XY::new(1_f32, 0_f32),
-				],
-				image_idx: self.image_pathes.len(),
-				sampler,
-				color_weight: RGBA::default(),
-			}
-		);
-		self.image_pathes.push(image_path);
-
-		self
-	}
-
-	pub fn next_same_texture(mut self, tag: &'static str) -> Self {
-		let sampler = self.builders.last().unwrap().sampler;
-		self.builders.push(
-			Rect2DBuilder {
-				tag,
-				extent: Extent2D::default(),
-				origin: CENTER,
-				color: [RGBA::default(); 4],
-				tex_coord: [
-					XY::new(0_f32, 0_f32),
-					XY::new(0_f32, 1_f32),
-					XY::new(1_f32, 1_f32),
-					XY::new(1_f32, 0_f32),
-				],
-				image_idx: self.image_pathes.len() - 1,
-				sampler,
-				color_weight: RGBA::default(),
-			}
-		);
-
-		self
-	}
-
-	pub fn extent(mut self, extent: Extent2D<i32>) -> Self {
-		self.builders.last_mut().unwrap().extent = extent;
-		self
-	}
-
-	pub fn origin(mut self, origin: XY) -> Self {
-		self.builders.last_mut().unwrap().origin = origin;
-		self
-	}
-
-	pub fn color(mut self, color: [RGBA; 4]) -> Self {
-		self.builders.last_mut().unwrap().color = color;
-		self
-	}
-
-	pub fn tex_coord(mut self, tex_coord: [XY; 4]) -> Self {
-		self.builders.last_mut().unwrap().tex_coord = tex_coord;
-		self
-	}
-
-	pub fn color_weight(mut self, color_weight: RGBA) -> Self {
-		self.builders.last_mut().unwrap().color_weight = color_weight;
-		self
+	pub fn get(&self, obj_index: usize, image_index: usize) -> vk::DescriptorSet {
+		self.sets[obj_index * self.sets_per_obj + image_index]
 	}
 }
 
-impl Font<'_> {
-	pub fn new() -> Self {
-		unimplemented!()
-	}
-
-	fn ascii_to_texture_coordinates(code: char) -> [XY; 4] {
-		unimplemented!()
-	}
+impl Drop for DescriptorSets<'_> {
+	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_descriptor_pool(self.pool, None); } }
 }
 
-
-pub fn load(
-	device: &Device,
-	render_pass: vk::RenderPass,
-) -> shaders::Shader {
+pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {
 	let descriptor_set_layout = {
 		let descriptor_set_bindings = [
 			vk::DescriptorSetLayoutBinding {
@@ -393,7 +256,7 @@ pub fn load(
 			vk::PushConstantRange {
 				stage_flags: vk::ShaderStageFlags::VERTEX,
 				offset: 0,
-				size: mem::size_of::<RGBA>() as u32,
+				size: (mem::size_of::<RGBA>() + mem::size_of::<XY>()) as u32,
 			},
 		];
 
@@ -600,88 +463,9 @@ pub fn load(
 		device.destroy_shader_module(frag_shader_module, None);
 	}
 
-	shaders::Shader {
+	Shader {
 		pipeline,
 		pipeline_layout,
 		descriptor_set_layout,
-	}
-}
-
-pub fn create_descriptor_sets(
-	device: &Device,
-	descriptor_set_layout: vk::DescriptorSetLayout,
-	sets_per_obj: usize,
-	textures: &[vk::DescriptorImageInfo],
-) -> DescriptorSets {
-	let descriptor_set_count = sets_per_obj * textures.len();
-
-	let descriptor_pool = {
-		let pool_sizes = vec![
-			vk::DescriptorPoolSize {
-				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-				descriptor_count: 1,
-			}; descriptor_set_count
-		];
-
-		let info = vk::DescriptorPoolCreateInfo {
-			s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::DescriptorPoolCreateFlags::empty(),
-			max_sets: descriptor_set_count as u32,
-			pool_size_count: pool_sizes.len() as u32,
-			p_pool_sizes: pool_sizes.as_ptr(),
-		};
-
-		unsafe {
-			device
-				.create_descriptor_pool(&info, None)
-				.expect("Failed to create descriptor pool.")
-		}
-	};
-
-	let set_layouts = vec![descriptor_set_layout; descriptor_set_count];
-
-	let descriptor_sets = unsafe {
-		device
-			.allocate_descriptor_sets(
-				&vk::DescriptorSetAllocateInfo {
-					s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-					p_next: ptr::null(),
-					descriptor_pool,
-					descriptor_set_count: set_layouts.len() as u32,
-					p_set_layouts: set_layouts.as_ptr(),
-				}
-			)
-			.unwrap()
-	};
-
-	let write_infos: Vec<_> = textures
-		.iter()
-		.zip(descriptor_sets[..].chunks(sets_per_obj))
-		.fold(Vec::new(), |mut write_infos, (image_info, descriptor_sets)| {
-			descriptor_sets
-				.iter()
-				.for_each(|&descriptor_set| {
-					write_infos.push(
-						vk::WriteDescriptorSet {
-							s_type: StructureType::WRITE_DESCRIPTOR_SET,
-							p_next: ptr::null(),
-							dst_set: descriptor_set,
-							dst_binding: 0,
-							dst_array_element: 0,
-							descriptor_count: 1,
-							descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-							p_image_info: image_info as *const _,
-							p_buffer_info: ptr::null(),
-							p_texel_buffer_view: ptr::null(),
-						}
-					);
-				});
-			write_infos
-		});
-
-	unsafe {
-		device.update_descriptor_sets(&write_infos[..], &[]);
-		DescriptorSets::new(descriptor_sets, descriptor_pool, sets_per_obj)
 	}
 }

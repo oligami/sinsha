@@ -1,16 +1,16 @@
-//pub mod gui;
+pub mod gui;
+
+use crate::vulkan::*;
 
 use ash::Device;
 use ash::version::DeviceV1_0;
 use ash::vk;
 use ash::vk::StructureType;
 
-use std::ptr;
 use std::fs;
+use std::ptr;
 use std::path::Path;
-use std::convert::AsRef;
 use std::error::Error;
-use std::boxed::Box;
 
 pub fn load_shader_module<P: AsRef<Path>>(
 	device: &Device,
@@ -35,54 +35,17 @@ pub struct Shader {
 }
 
 pub struct Shaders {
-//	pub gui: Shader,
-}
-
-pub struct DescriptorSets {
-	pub descriptor_sets: Vec<vk::DescriptorSet>,
-	pub descriptor_pool: vk::DescriptorPool,
-	sets_per_obj: usize,
+	pub gui: Shader,
 }
 
 impl Shaders {
 	pub fn load(device: &Device, render_pass: vk::RenderPass) -> Self {
 		Self {
-//			gui: self::gui::load(device, render_pass),
+			gui: self::gui::load(device, render_pass),
 		}
 	}
 }
 
-impl DescriptorSets {
-	pub unsafe fn new(
-		descriptor_sets: Vec<vk::DescriptorSet>,
-		descriptor_pool: vk::DescriptorPool,
-		sets_per_obj: usize,
-	) -> Self {
-		Self {
-			descriptor_sets,
-			descriptor_pool,
-			sets_per_obj,
-		}
-	}
 
-	pub unsafe fn gui(
-		device: &Device,
-		descriptor_set_layout: vk::DescriptorSetLayout,
-		descriptor_set_per_obj: usize,
-		textures: &[vk::DescriptorImageInfo],
-	) -> Self {
-//		self::gui::create_descriptor_sets(
-//			device,
-//			descriptor_set_layout,
-//			descriptor_set_per_obj,
-//			textures,
-//		)
-		unimplemented!()
-	}
-
-	pub fn get(&self, obj_index: usize, image_index: usize) -> vk::DescriptorSet {
-		self.descriptor_sets[obj_index * self.sets_per_obj + image_index]
-	}
-}
 
 
