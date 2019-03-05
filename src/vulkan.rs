@@ -21,9 +21,11 @@ use ash::Device;
 use winit::Window;
 
 use std::ptr;
+use std::mem;
 use std::ffi::CString;
 use std::default::Default;
-
+use std::marker::PhantomData;
+use std::ops::Range;
 
 pub struct PhysicalDevice {
 	pub raw_handle: vk::PhysicalDevice,
@@ -71,6 +73,21 @@ pub struct VkGraphic<'vk_core> {
 	render_pass: vk::RenderPass,
 	shaders: Shaders,
 	framebuffers: Vec<vk::Framebuffer>,
+}
+
+pub struct VkSampler<'vk_core> {
+	vk_core: &'vk_core VkCore,
+	raw_handle: vk::Sampler,
+}
+
+pub struct VkFence<'vk_core> {
+	vk_core: &'vk_core VkCore,
+	raw_handle: vk::Fence,
+}
+
+pub struct VkSemaphore<'vk_core> {
+	raw_handle: vk::Semaphore,
+	_marker: PhantomData<&'vk_core VkCore>,
 }
 
 impl PhysicalDevice {
@@ -201,6 +218,13 @@ impl VkCore {
 				queue,
 				surface,
 			}
+		}
+	}
+
+	pub fn destroy_semaphore(&self, semaphore: VkSemaphore) {
+		unsafe {
+			self.device.destroy_semaphore(semaphore.raw_handle, None);
+			mem::forget(semaphore);
 		}
 	}
 }
@@ -497,6 +521,104 @@ impl Drop for VkGraphic<'_> {
 		}
 		eprintln!("Dropped VkGraphic.");
 	}
+}
+
+impl<'vk_core> VkSampler<'vk_core> {
+	pub fn new(
+		vk_core: &'vk_core VkCore,
+		(min_filter, mag_filter): (vk::Filter, vk::Filter),
+		address_mode_u: vk::SamplerAddressMode,
+		address_mode_v: vk::SamplerAddressMode,
+		address_mode_w: vk::SamplerAddressMode,
+		border_color: vk::BorderColor,
+		mipmap_mode: vk::SamplerMipmapMode,
+		mip_lod_bias: f32,
+		lod_range: Range<f32>,
+		anisotropy: Option<f32>,
+		compare: Option<vk::CompareOp>,
+		unnormalized_coordinates: vk::Bool32,
+	) -> Result<Self, vk::Result> {
+		unsafe {
+			let raw_handle = vk_core.device
+				.create_sampler(
+					&vk::SamplerCreateInfo {
+						s_type: StructureType::SAMPLER_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::SamplerCreateFlags::empty(),
+						min_filter,
+						mag_filter,
+						address_mode_u,
+						address_mode_v,
+						address_mode_w,
+						border_color,
+						mipmap_mode,
+						mip_lod_bias,
+						min_lod: lod_range.start,
+						max_lod: lod_range.end,
+						anisotropy_enable: anisotropy.map(|_| vk::TRUE).unwrap_or(vk::FALSE),
+						max_anisotropy: anisotropy.unwrap_or(1.0),
+						compare_enable: compare.map(|_| vk::TRUE).unwrap_or(vk::FALSE),
+						compare_op: compare.unwrap_or(vk::CompareOp::NEVER),
+						unnormalized_coordinates,
+					},
+					None,
+				)?;
+
+			Ok(Self { vk_core, raw_handle })
+		}
+	}
+}
+
+impl Drop for VkSampler<'_> {
+	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_sampler(self.raw_handle, None); } }
+}
+
+impl<'vk_core> VkFence<'vk_core> {
+	pub fn new(vk_core: &'vk_core VkCore, signaled: bool) -> Result<Self, vk::Result> {
+		unsafe {
+			let raw_handle = vk_core.device
+				.create_fence(
+					&vk::FenceCreateInfo {
+						s_type: StructureType::FENCE_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: if signaled {
+							vk::FenceCreateFlags::SIGNALED
+						} else {
+							vk::FenceCreateFlags::empty()
+						},
+					},
+					None,
+				)?;
+
+			Ok(Self { vk_core, raw_handle })
+		}
+	}
+}
+
+impl Drop for VkFence<'_> {
+	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_fence(self.raw_handle, None); } }
+}
+
+impl<'vk_core> VkSemaphore<'vk_core> {
+	pub fn new(vk_core: &'vk_core VkCore) -> Result<Self, vk::Result> {
+		unsafe {
+			let raw_handle = vk_core.device
+				.create_semaphore(
+					&vk::SemaphoreCreateInfo {
+						s_type: StructureType::SEMAPHORE_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::SemaphoreCreateFlags::empty(),
+					},
+					None,
+				)?;
+
+			Ok(Self { raw_handle, _marker: PhantomData, })
+		}
+	}
+}
+
+impl Drop for VkSemaphore<'_> {
+	fn drop(&mut self) { panic!("VkSemaphore is not destroyed.") }
 }
 
 fn instance_extensions() -> Vec<*const i8> {

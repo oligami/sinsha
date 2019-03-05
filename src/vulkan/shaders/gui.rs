@@ -1,15 +1,14 @@
-use ash::version::DeviceV1_0;
 use ash::vk;
-use ash::vk::StructureType;
 use ash::Device;
-use std::ptr;
+use ash::vk::StructureType;
+use ash::version::DeviceV1_0;
 
-use crate::linear_algebra::{XY, RGBA};
 use crate::vulkan::*;
+use crate::linear_algebra::{XY, RGBA};
 
 use std::mem;
+use std::ptr;
 use std::slice;
-use std::default::Default;
 use std::ffi::CString;
 use std::collections::HashMap;
 
@@ -37,21 +36,22 @@ pub struct Extent2D<T> {
 // CPUから描画範囲を知りたい。
 // window resize のときに必要な情報が欲しい。原点の場所とか
 pub struct Rect2Ds<'vk_core, 'texture> {
-	positions: Vec<(Extent2D<f32>, Extent2D<i32>)>,
+	pixel_extent: Extent2D<i32>,
+	origin: XY,
+	normalized_extent: Extent2D<f32>,
 	vertex_buffers: MemoryBlock<'vk_core>,
 	textures: &'texture MemoryBlock<'vk_core>,
 	descriptor_sets: DescriptorSets<'vk_core>,
 	push_constants: Vec<PushConstant>,
 }
 
-struct Rect2DBuilder {
-	tag: &'static str,
+struct Rect2DBuilder<'vk_core, 'sampler> {
 	extent: Extent2D<i32>,
 	origin: XY,
 	color: [RGBA; 4],
 	tex_coord: [XY; 4],
 	image_idx: usize,
-	sampler: vk::Sampler,
+	sampler: &'sampler VkSampler<'vk_core>,
 	color_weight: RGBA,
 }
 
@@ -63,6 +63,10 @@ impl Default for Vertex {
 			texture: XY::zero(),
 		}
 	}
+}
+
+impl Vertex {
+	pub fn size(n: usize) -> vk::DeviceSize { (mem::size_of::<Self>() * n) as vk::DeviceSize }
 }
 
 impl AsRef<[u8]> for PushConstant {
@@ -138,7 +142,7 @@ pub struct DescriptorSets<'vk_core> {
 impl<'vk_core> DescriptorSets<'vk_core> {
 	pub fn new(
 		vk_graphic: &VkGraphic<'vk_core>,
-		textures: &[(&Image<'vk_core>, vk::Sampler)],
+		textures: &[(&Image<'vk_core>, &VkSampler)],
 		sets_per_obj: usize,
 	) -> Result<Self, vk::Result> {
 		unsafe {
@@ -180,7 +184,7 @@ impl<'vk_core> DescriptorSets<'vk_core> {
 				.map(|(image, sampler)| vk::DescriptorImageInfo {
 					image_view: image.view(),
 					image_layout: image.layout(0),
-					sampler: *sampler,
+					sampler: sampler.raw_handle,
 				})
 				.collect();
 			let mut write_sets = Vec::with_capacity(sets_num);

@@ -47,7 +47,7 @@ impl Engine {
 
 		let logical_buffer = LogicalBuffer::new(
 			vk_core,
-			128,
+			gui::Vertex::size(4),
 			vk::BufferUsageFlags::TRANSFER_SRC,
 			vk::SharingMode::EXCLUSIVE,
 		).unwrap();

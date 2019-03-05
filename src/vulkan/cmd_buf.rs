@@ -21,19 +21,14 @@ pub struct CommandRecorder<'vk_core, 'cmd_buf> {
 	index: usize,
 }
 
+pub struct General;
+
 /// The number of this struct's command buffers should be as much as that of swapchain's.
 pub struct GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, T> {
 	command_recorder: CommandRecorder<'vk_core, 'cmd_buf>,
 	graphic: &'vk_graphic VkGraphic<'vk_core>,
 	_marker: PhantomData<T>,
 }
-
-pub struct Uninitialized;
-pub struct General;
-pub struct Natural;
-pub struct InRenderPass;
-pub struct GuiPipeline;
-pub struct End;
 
 impl<'vk_core> Commandbuffers<'vk_core> {
 	pub fn new(
@@ -253,9 +248,9 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 	pub fn queue_submit(
 		self,
 		ref wait_dst_stage_mask: vk::PipelineStageFlags,
-		wait_semaphores: &[vk::Semaphore],
-		signal_semaphores: &[vk::Semaphore],
-		&signal_fence: &vk::Fence,
+		wait_semaphores: &[VkSemaphore],
+		signal_semaphores: &[VkSemaphore],
+		signal_fence: &VkFence,
 	) -> Result<(), vk::Result> {
 		unsafe {
 			self.command_buffers.vk_core.device
@@ -271,11 +266,11 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 						p_command_buffers: self.command_buffers.index(self.index) as *const _,
 						p_wait_dst_stage_mask: wait_dst_stage_mask as *const _,
 						wait_semaphore_count: wait_semaphores.len() as u32,
-						p_wait_semaphores: wait_semaphores.as_ptr(),
+						p_wait_semaphores: wait_semaphores.as_ptr() as *const _,
 						signal_semaphore_count: signal_semaphores.len() as u32,
-						p_signal_semaphores: signal_semaphores.as_ptr(),
+						p_signal_semaphores: signal_semaphores.as_ptr() as *const _,
 					}],
-					signal_fence,
+					signal_fence.raw_handle,
 				)?;
 
 			Ok(())
