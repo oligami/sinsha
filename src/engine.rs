@@ -1,3 +1,5 @@
+mod start_menu;
+
 use ash::vk;
 
 use crate::vulkan::*;
@@ -45,48 +47,6 @@ impl Engine {
 	) {
 		let mut interaction_devices = InteractionDevices::new(window);
 
-		let _font_path = "assets/font/friz_quadrata.png";
-		let info_box_path = "assets/textures/info_box.png";
-		let (image, extent) = LogicalImage::load_image_file(info_box_path).unwrap();
-		let logical_image = LogicalImage::new(
-			vk_core,
-			vk::ImageType::TYPE_2D,
-			extent,
-			vk::Format::R8G8B8_UNORM,
-			vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC,
-			vk::SharingMode::EXCLUSIVE,
-			vk::ImageLayout::UNDEFINED,
-			vk::SampleCountFlags::TYPE_1,
-			vk::ImageAspectFlags::COLOR,
-			1,
-			1,
-		).unwrap();
-
-		let image_memory = MemoryBlock::new(
-			vk_core,
-			vec![],
-			vec![(logical_image, vk::ImageViewType::TYPE_2D, vk::ComponentMapping::default())],
-			vk::MemoryPropertyFlags::HOST_VISIBLE,
-		);
-
-		let logical_buffer = LogicalBuffer::new(
-			vk_core,
-			gui::Vertex::size(4),
-			vk::BufferUsageFlags::VERTEX_BUFFER,
-			vk::SharingMode::EXCLUSIVE,
-		).unwrap();
-
-		let memory = MemoryBlock::new(
-			vk_core,
-			vec![logical_buffer],
-			vec![],
-			vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-		).unwrap();
-
-
-
-		let semaphore = VkSemaphore::new(vk_core).unwrap();
-
 		loop {
 			let mut close_requested = false;
 			events_loop.poll_events(|event| {
@@ -102,7 +62,5 @@ impl Engine {
 
 			interaction_devices.clear();
 		}
-
-		semaphore.drop(vk_core);
 	}
 }

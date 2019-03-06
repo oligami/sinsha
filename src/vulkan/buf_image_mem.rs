@@ -10,7 +10,7 @@ use std::fmt;
 use std::mem;
 use std::slice;
 use std::error::Error;
-use std::ops::Range;
+use std::ops::{Range, Bound, RangeBounds};
 use std::path::Path;
 
 pub struct LogicalBuffer<'vk_core> {
@@ -114,11 +114,27 @@ impl<'vk_core> Buffer<'vk_core> {
 	#[inline]
 	pub fn size(&self) -> vk::DeviceSize { self.range.end - self.range.start }
 
-	pub fn barrier(
+	pub fn barrier<R>(
 		&self,
 		access: (vk::AccessFlags, vk::AccessFlags),
-		range: Range<vk::DeviceSize>,
-	) -> vk::BufferMemoryBarrier {
+		range: R,
+	) -> vk::BufferMemoryBarrier
+		where R: RangeBounds<vk::DeviceSize>
+	{
+		let offset = match range.start_bound() {
+			Bound::Included(&n) => n,
+			Bound::Excluded(&n) => n + 1,
+			Bound::Unbounded => self.range.start,
+		};
+		let end = match range.end_bound() {
+			Bound::Included(&n) => n,
+			Bound::Excluded(&n) => n - 1,
+			Bound::Unbounded => self.range.end,
+		};
+
+		debug_assert!(self.range.start < offset);
+		debug_assert!(end < self.range.end);
+
 		vk::BufferMemoryBarrier {
 			s_type: StructureType::BUFFER_MEMORY_BARRIER,
 			p_next: ptr::null(),
@@ -127,8 +143,8 @@ impl<'vk_core> Buffer<'vk_core> {
 			src_access_mask: access.0,
 			dst_access_mask: access.1,
 			buffer: self.raw_handle(),
-			offset: range.start,
-			size: range.end - range.start,
+			offset,
+			size: end - offset,
 		}
 	}
 }
@@ -220,7 +236,9 @@ impl<'vk_core> LogicalImage<'vk_core> {
 	#[inline]
 	pub fn array_layers(&self) -> u32 { self.array_layers }
 
-	pub fn maximum_mip_level(width: u32, height: u32) -> u32 {
+	/// calculate maximum mip level by width and height.
+	pub fn maximum_mip_level(extent: vk::Extent3D) -> u32 {
+		let vk::Extent3D { width, height, .. } = extent;
 		[width, height]
 			.iter()
 			.map(|&num| (num as f32).log2() as u32)
@@ -274,14 +292,42 @@ impl<'vk_core> Image<'vk_core> {
 		mem::replace(&mut self.logical.layout[mip_level as usize], new_layout)
 	}
 
-	pub fn barrier(
+	pub fn barrier<Rm, Ra>(
 		&mut self,
-		(mip_level_range, array_layer_range): (Range<u32>, Range<u32>),
+		mip_level_range: Rm,
+		array_layer_range: Ra,
 		new_layout: vk::ImageLayout,
 		access: (vk::AccessFlags, vk::AccessFlags),
-	) -> (&mut Self, vk::ImageMemoryBarrier) {
-		debug_assert!(mip_level_range.end < self.mip_levels());
-		debug_assert!(array_layer_range.end < self.array_layers());
+	) -> (&mut Self, vk::ImageMemoryBarrier)
+		where Rm: RangeBounds<u32>,
+			  Ra: RangeBounds<u32>,
+	{
+		let base_mip_level = match mip_level_range.start_bound() {
+			Bound::Included(&n) => n,
+			Bound::Excluded(&n) => n + 1,
+			Bound::Unbounded => 0,
+		};
+		let end_mip_level = match mip_level_range.end_bound() {
+			Bound::Included(&n) => n,
+			Bound::Excluded(&n) => n - 1,
+			Bound::Unbounded => self.logical.mip_levels,
+		};
+
+		let base_array_layer = match array_layer_range.start_bound() {
+			Bound::Included(&n) => n,
+			Bound::Excluded(&n) => n + 1,
+			Bound::Unbounded => 0,
+		};
+
+		let end_array_layer = match array_layer_range.end_bound() {
+			Bound::Included(&n) => n,
+			Bound::Excluded(&n) => n - 1,
+			Bound::Unbounded => self.logical.array_layers,
+		};
+
+		debug_assert!(end_mip_level < self.logical.mip_levels);
+		debug_assert!(end_array_layer < self.logical.array_layers);
+
 		let barrier_info = vk::ImageMemoryBarrier {
 			s_type: StructureType::BUFFER_MEMORY_BARRIER,
 			p_next: ptr::null(),
@@ -290,14 +336,14 @@ impl<'vk_core> Image<'vk_core> {
 			src_access_mask: access.0,
 			dst_access_mask: access.1,
 			image: self.raw_handle(),
-			old_layout: self.layout(mip_level_range.start),
+			old_layout: self.layout(base_mip_level),
 			new_layout,
 			subresource_range: vk::ImageSubresourceRange {
 				aspect_mask: self.aspect_mask(),
-				base_mip_level: mip_level_range.start,
-				level_count: mip_level_range.end - mip_level_range.start,
-				base_array_layer: array_layer_range.start,
-				layer_count: array_layer_range.end - array_layer_range.start,
+				base_mip_level,
+				level_count: end_mip_level - base_mip_level,
+				base_array_layer,
+				layer_count: end_array_layer - base_array_layer,
 			},
 		};
 
@@ -446,24 +492,36 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 		)
 	}
 
-	pub fn buffer_access<'memory>(
+	pub fn buffer_access<'memory, R>(
 		&'memory mut self,
 		idx: usize,
-		map_range: Range<vk::DeviceSize>,
-	) -> Result<MemoryAccess<'vk_core, 'memory>, vk::Result> {
+		map_range: R,
+	) -> Result<MemoryAccess<'vk_core, 'memory>, vk::Result>
+		where R: RangeBounds<vk::DeviceSize>
+	{
 		unsafe {
-			debug_assert!(map_range.end <= self.ref_buffer(idx).size());
+			let map_range_start = match map_range.start_bound() {
+				Bound::Included(&n) => n,
+				Bound::Excluded(&n) => n + 1,
+				Bound::Unbounded => 0,
+			};
+			let map_range_end = match map_range.end_bound() {
+				Bound::Included(&n) => n,
+				Bound::Excluded(&n) => n - 1,
+				Bound::Unbounded => 0,
+			};
+			debug_assert!(map_range_end <= self.ref_buffer(idx).size());
 
-			let size = map_range.end - map_range.start;
+			let size = map_range_end - map_range_start;
 			let ptr = self.vk_core.device
-				.map_memory(self.raw_handle, map_range.start, size, vk::MemoryMapFlags::empty(), )?
+				.map_memory(self.raw_handle, map_range_start, size, vk::MemoryMapFlags::empty(), )?
 				as *mut u8;
 
 			let map_range = [vk::MappedMemoryRange {
 				s_type: StructureType::MAPPED_MEMORY_RANGE,
 				p_next: ptr::null(),
 				memory: self.raw_handle,
-				offset: map_range.start,
+				offset: map_range_start,
 				size,
 			}];
 

@@ -4,6 +4,7 @@ mod shaders;
 
 pub use crate::vulkan::shaders::*;
 pub use crate::vulkan::buf_image_mem::*;
+pub use crate::vulkan::cmd_buf::*;
 
 use crate::linear_algebra::*;
 
