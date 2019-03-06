@@ -12,7 +12,6 @@ use std::slice;
 use std::error::Error;
 use std::ops::Range;
 use std::path::Path;
-use std::io::Write;
 
 pub struct LogicalBuffer<'vk_core> {
 	vk_core: &'vk_core VkCore,
@@ -227,6 +226,16 @@ impl<'vk_core> LogicalImage<'vk_core> {
 			.map(|&num| (num as f32).log2() as u32)
 			.min()
 			.unwrap_or(1)
+	}
+
+	pub fn load_image_file<P>(path: P) -> Result<(Vec<u8>, vk::Extent3D), image_crate::ImageError>
+		where P: AsRef<Path>
+	{
+		let image = image_crate::open(path)?.to_rgba();
+		let (width, height) = image.dimensions();
+		let extent = vk::Extent3D { width, height, depth: 1 };
+		let bytes = image.into_raw();
+		Ok((bytes, extent))
 	}
 }
 
@@ -466,24 +475,6 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 				}
 			)
 		}
-	}
-
-	/// load image file as a RGBA image to the buffer
-	pub fn load_image_file_to_buffer<P: AsRef<Path>>(
-		&mut self,
-		buffer_index: usize,
-		offset: u64,
-		path: P,
-	) -> Result<(u32, u32), Box<dyn Error>> {
-		let image = image_crate::open(path)?.to_rgba();
-		let dimensions = image.dimensions();
-		let data = image.into_raw();
-
-		let mut access = self.buffer_access(buffer_index, offset..data.len() as u64)?;
-		access.write(&data)?;
-		drop(access);
-
-		Ok(dimensions)
 	}
 
 	#[inline]

@@ -85,6 +85,8 @@ pub struct VkFence<'vk_core> {
 	raw_handle: vk::Fence,
 }
 
+/// vk::Semaphore is often used in type slice.
+/// This struct should be destroyed explicitly.
 pub struct VkSemaphore<'vk_core> {
 	raw_handle: vk::Semaphore,
 	_marker: PhantomData<&'vk_core VkCore>,
@@ -218,13 +220,6 @@ impl VkCore {
 				queue,
 				surface,
 			}
-		}
-	}
-
-	pub fn destroy_semaphore(&self, semaphore: VkSemaphore) {
-		unsafe {
-			self.device.destroy_semaphore(semaphore.raw_handle, None);
-			mem::forget(semaphore);
 		}
 	}
 }
@@ -613,6 +608,13 @@ impl<'vk_core> VkSemaphore<'vk_core> {
 				)?;
 
 			Ok(Self { raw_handle, _marker: PhantomData, })
+		}
+	}
+
+	pub fn drop(self, vk_core: &VkCore) {
+		unsafe {
+			vk_core.device.destroy_semaphore(self.raw_handle, None);
+			mem::forget(self);
 		}
 	}
 }
