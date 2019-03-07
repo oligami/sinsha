@@ -275,6 +275,12 @@ impl<'vk_core> Image<'vk_core> {
 	pub fn extent(&self, mip_level: u32) -> vk::Extent3D { self.logical.extent(mip_level) }
 
 	#[inline]
+	pub fn extent_tuple(&self, mip_level: u32) -> (i32, i32, i32) {
+		let extent = self.logical.extent(mip_level);
+		(extent.width as i32, extent.height as i32, extent.depth as i32)
+	}
+
+	#[inline]
 	pub fn aspect_mask(&self) -> vk::ImageAspectFlags { self.logical.aspect_mask }
 
 	#[inline]
@@ -294,8 +300,8 @@ impl<'vk_core> Image<'vk_core> {
 
 	pub fn barrier<Rm, Ra>(
 		&mut self,
-		mip_level_range: Rm,
-		array_layer_range: Ra,
+		mip_level_range: &Rm,
+		array_layer_range: &Ra,
 		new_layout: vk::ImageLayout,
 		access: (vk::AccessFlags, vk::AccessFlags),
 	) -> (&mut Self, vk::ImageMemoryBarrier)

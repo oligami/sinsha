@@ -187,8 +187,8 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 		&mut self,
 		(src_image, dst_image): (&Image<'vk_core>, &Image<'vk_core>),
 		(src_mip_level, dst_mip_level): (u32, u32),
-		(src_array_layer_range, dst_array_layer_range): (Range<u32>, Range<u32>),
-		(src_extent, dst_extent): (Range<(i32, i32, i32)>, Range<(i32, i32, i32)>),
+		(src_array_layer_range, dst_array_layer_range): (&Range<u32>, &Range<u32>),
+		(src_extent, dst_extent): (&Range<(i32, i32, i32)>, &Range<(i32, i32, i32)>),
 		filter: vk::Filter,
 	) -> &mut Self {
 		unsafe {

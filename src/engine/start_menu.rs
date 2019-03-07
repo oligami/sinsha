@@ -59,7 +59,7 @@ pub fn load_gui<'vk_core, 'memory>(
 
 	let mut buffer_access = staging_buffer.buffer_access(0, 0..size)?;
 
-	for bytes in bytes_of_images.into_iter() {
+	for bytes in bytes_of_images.iter() {
 		debug_assert_eq!(bytes.len(), buffer_access.write(&bytes[..])?);
 	}
 	buffer_access.flush()?;
@@ -77,8 +77,8 @@ pub fn load_gui<'vk_core, 'memory>(
 	for image in images.image_iter_mut() {
 		let barrier = image
 			.barrier(
-				..,
-				..,
+				&(..),
+				&(..),
 				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
 				(vk::AccessFlags::empty(), vk::AccessFlags::TRANSFER_WRITE),
 			);
@@ -92,14 +92,15 @@ pub fn load_gui<'vk_core, 'memory>(
 			image_barriers,
 		);
 
-	for image in images.image_iter() {
+	let mut offset = 0;
+	for (image, bytes) in images.image_iter().zip(bytes_of_images.iter()) {
 		command_recorder
 			.buffer_to_image(
 				staging_buffer.ref_buffer(0),
 				(image, 0),
 				&[
 					vk::BufferImageCopy {
-						buffer_offset: unimplemented!(),
+						buffer_offset: offset,
 						buffer_row_length: 0,
 						buffer_image_height: 0,
 						image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
@@ -113,8 +114,60 @@ pub fn load_gui<'vk_core, 'memory>(
 					}
 				]
 			);
+
+		offset += offset + bytes.len() as u64;
 	}
 
+	for image in images.image_iter_mut() {
+		for mip_level in 0..image.mip_levels() {
+			let (src_mip_level, dst_mip_level) = (mip_level, mip_level + 1);
+			let array_layer_range = 0..image.array_layers();
+			let barrier = image.barrier(
+				&(src_mip_level..dst_mip_level),
+				&array_layer_range,
+				vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+				(vk::AccessFlags::TRANSFER_WRITE, vk::AccessFlags::TRANSFER_READ)
+			);
+
+			command_recorder
+				.barriers(
+					(vk::PipelineStageFlags::empty(), vk::PipelineStageFlags::empty()),
+					&[],
+					vec![barrier],
+				)
+				.blit_image(
+					(image, image),
+					(src_mip_level, dst_mip_level),
+					(&array_layer_range, &array_layer_range),
+					(
+						&((0, 0, 0)..image.extent_tuple(src_mip_level)),
+						&((0, 0, 0)..image.extent_tuple(dst_mip_level))
+					),
+					vk::Filter::LINEAR,
+				);
+		}
+	}
+
+	for image in images.image_iter_mut() {
+		let array_layer_range = 0..image.array_layers();
+		let mip_level_range = 0..image.mip_levels();
+		let barrier = image.barrier(
+			&mip_level_range,
+			&array_layer_range,
+			vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+			(
+				vk::AccessFlags::TRANSFER_READ | vk::AccessFlags::TRANSFER_WRITE,
+				vk::AccessFlags::SHADER_READ
+			),
+		);
+
+		command_recorder
+			.barriers(
+				(vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER),
+				&[],
+				vec![barrier]
+			);
+	}
 
 	unimplemented!()
 }
