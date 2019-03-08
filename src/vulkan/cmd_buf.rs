@@ -154,12 +154,14 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 		&mut self,
 		stage: (vk::PipelineStageFlags, vk::PipelineStageFlags),
 		buffer_barriers: &[vk::BufferMemoryBarrier],
-		image_barriers: Vec<(&mut Image<'vk_core>, vk::ImageMemoryBarrier)>,
+		image_barriers: &mut [ImageMemoryBarrier<'vk_core, '_>],
 	) -> &mut Self {
 		unsafe {
 			let image_barriers: Vec<_> = image_barriers
 				.into_iter()
-				.map(|(image, barrier)| {
+				.map(|image_barrier| {
+					let barrier = image_barrier.vk();
+					let image = image_barrier.image_mut();
 					let mip_level_start = barrier.subresource_range.base_mip_level;
 					let mip_level_end = mip_level_start + barrier.subresource_range.level_count;
 					for mip_level in mip_level_start..mip_level_end {

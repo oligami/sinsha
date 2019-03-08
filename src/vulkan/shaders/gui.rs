@@ -45,16 +45,6 @@ pub struct Rect2Ds<'vk_core, 'texture> {
 	push_constants: Vec<PushConstant>,
 }
 
-struct Rect2DBuilder<'vk_core, 'sampler> {
-	extent: Extent2D<i32>,
-	origin: XY,
-	color: [RGBA; 4],
-	tex_coord: [XY; 4],
-	image_idx: usize,
-	sampler: &'sampler VkSampler<'vk_core>,
-	color_weight: RGBA,
-}
-
 impl Default for Vertex {
 	fn default() -> Self {
 		Self {
@@ -66,6 +56,10 @@ impl Default for Vertex {
 }
 
 impl Vertex {
+	pub const fn new(color: RGBA, position: XY, texture: XY) -> Self {
+		Self { color, position, texture }
+	}
+
 	pub fn size(n: usize) -> vk::DeviceSize { (mem::size_of::<Self>() * n) as vk::DeviceSize }
 }
 
@@ -73,7 +67,7 @@ impl AsRef<[u8]> for PushConstant {
 	fn as_ref(&self) -> &[u8] {
 		unsafe {
 			let ptr = self as *const _ as *const u8;
-			slice::from_raw_parts(ptr, mem::size_of::<RGBA>() + mem::size_of::<XY>())
+			slice::from_raw_parts(ptr, mem::size_of::<Self>())
 		}
 	}
 }

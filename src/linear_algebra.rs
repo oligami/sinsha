@@ -68,7 +68,7 @@ impl Default for RGBA {
 }
 
 impl RGBA {
-	pub fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
+	pub const fn new(r: f32, g: f32, b: f32, a: f32) -> Self {
 		Self { r, g, b, a }
 	}
 
@@ -82,7 +82,7 @@ impl RGBA {
 
 
 impl XY {
-	pub fn zero() -> Self {
+	pub const fn zero() -> Self {
 		Self {
 			x: 0.0,
 			y: 0.0,

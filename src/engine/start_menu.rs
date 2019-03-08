@@ -1,7 +1,13 @@
+mod data;
+
+use data::*;
+
 use ash::vk;
 
 use crate::vulkan::*;
+use crate::linear_algebra::*;
 
+use std::mem;
 use std::path::*;
 use std::io::Write;
 use std::error::Error;
@@ -89,7 +95,7 @@ pub fn load_gui<'vk_core, 'memory>(
 		.barriers(
 			(vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER),
 			&[],
-			image_barriers,
+			&mut image_barriers[..],
 		);
 
 	let mut offset = 0;
@@ -133,7 +139,7 @@ pub fn load_gui<'vk_core, 'memory>(
 				.barriers(
 					(vk::PipelineStageFlags::empty(), vk::PipelineStageFlags::empty()),
 					&[],
-					vec![barrier],
+					&mut [barrier],
 				)
 				.blit_image(
 					(image, image),
@@ -165,9 +171,28 @@ pub fn load_gui<'vk_core, 'memory>(
 			.barriers(
 				(vk::PipelineStageFlags::TRANSFER, vk::PipelineStageFlags::FRAGMENT_SHADER),
 				&[],
-				vec![barrier]
+				&mut [barrier]
 			);
 	}
+
+	let start_buttom = START_BUTTON;
+	let logical_buffer = LogicalBuffer::new(
+		vk_core,
+		mem::size_of_val(&start_buttom) as _,
+		vk::BufferUsageFlags::VERTEX_BUFFER,
+		vk::SharingMode::EXCLUSIVE,
+	)?;
+
+	let mut buffer_memory = MemoryBlock::new(
+		vk_core,
+		vec![logical_buffer],
+		vec![],
+		vk::MemoryPropertyFlags::HOST_VISIBLE,
+	)?;
+
+	let mut access = buffer_memory.buffer_access(0, ..)?;
+
+	drop(access);
 
 	unimplemented!()
 }

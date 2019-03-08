@@ -42,6 +42,11 @@ pub struct Image<'vk_core> {
 	range: Range<vk::DeviceSize>,
 }
 
+pub struct ImageMemoryBarrier<'vk_core, 'image> {
+	vk: vk::ImageMemoryBarrier,
+	image_mut: &'image mut Image<'vk_core>,
+}
+
 pub struct MemoryBlock<'vk_core> {
 	vk_core: &'vk_core VkCore,
 	raw_handle: vk::DeviceMemory,
@@ -304,7 +309,7 @@ impl<'vk_core> Image<'vk_core> {
 		array_layer_range: &Ra,
 		new_layout: vk::ImageLayout,
 		access: (vk::AccessFlags, vk::AccessFlags),
-	) -> (&mut Self, vk::ImageMemoryBarrier)
+	) -> ImageMemoryBarrier<'vk_core, '_>
 		where Rm: RangeBounds<u32>,
 			  Ra: RangeBounds<u32>,
 	{
@@ -353,7 +358,10 @@ impl<'vk_core> Image<'vk_core> {
 			},
 		};
 
-		(self, barrier_info)
+		ImageMemoryBarrier {
+			vk: barrier_info,
+			image_mut: self,
+		}
 	}
 }
 
@@ -361,6 +369,11 @@ impl Drop for Image<'_> {
 	fn drop(&mut self) {
 		unsafe { self.logical.vk_core.device.destroy_image_view(self.view, None); }
 	}
+}
+
+impl<'vk_core> ImageMemoryBarrier<'vk_core, '_> {
+	pub fn vk(&self) -> vk::ImageMemoryBarrier { self.vk }
+	pub fn image_mut(&mut self) -> &mut Image<'vk_core> { self.image_mut }
 }
 
 impl<'vk_core> MemoryBlock<'vk_core> {
@@ -560,6 +573,16 @@ impl Drop for MemoryBlock<'_> {
 		}
 
 		eprintln!("Dropping Memory.");
+	}
+}
+
+impl MemoryAccess<'_, '_> {
+	pub fn skip(&mut self, n: usize) -> io::Result<usize> {
+		let min = n.min(self.mapped_memory.len());
+		let (_skipped, untouched) =
+			mem::replace(&mut self.mapped_memory, &mut []).split_at_mut(min);
+		self.mapped_memory = untouched;
+		Ok(min)
 	}
 }
 
