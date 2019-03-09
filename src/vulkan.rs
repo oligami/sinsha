@@ -223,6 +223,10 @@ impl VkCore {
 			}
 		}
 	}
+
+	pub fn queue_wait_idle(&self) -> Result<(), vk::Result> {
+		unsafe { self.device.queue_wait_idle(self.queue) }
+	}
 }
 
 impl Drop for VkCore {
@@ -239,6 +243,9 @@ impl Swapchain {
 	pub fn render_extent(&self) -> XY {
 		XY::new(self.data.extent.width as f32, self.data.extent.height as f32)
 	}
+
+	#[inline]
+	fn images_num(&self) -> usize { self.images.len() }
 }
 
 impl<'vk_core> VkGraphic<'vk_core> {
@@ -486,6 +493,9 @@ impl<'vk_core> VkGraphic<'vk_core> {
 			}
 		}
 	}
+
+	#[inline]
+	pub fn images_num(&self) -> usize { self.swapchain.images_num() }
 }
 
 impl Drop for VkGraphic<'_> {
@@ -587,6 +597,14 @@ impl<'vk_core> VkFence<'vk_core> {
 				)?;
 
 			Ok(Self { vk_core, raw_handle })
+		}
+	}
+
+	pub fn wait(&self, timeout: Option<u64>) -> Result<(), vk::Result> {
+		unsafe {
+			self.vk_core.device.wait_for_fences(&[self.raw_handle], false, timeout.unwrap_or(!0))?;
+			self.vk_core.device.reset_fences(&[self.raw_handle])?;
+			Ok(())
 		}
 	}
 }

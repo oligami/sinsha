@@ -15,7 +15,7 @@ use std::error::Error;
 pub fn load_gui<'vk_core, 'memory>(
 	vk_core: &'vk_core VkCore,
 	command_recorder: &mut CommandRecorder<'vk_core, '_>,
-) -> Result<gui::Rect2Ds<'vk_core, 'memory>, Box<dyn Error>> {
+) -> Result<(), Box<dyn Error>> {
 	let texture_path_root = "assets/textures";
 
 	let texture_pathes = [
@@ -63,7 +63,7 @@ pub fn load_gui<'vk_core, 'memory>(
 		vk::MemoryPropertyFlags::HOST_VISIBLE,
 	)?;
 
-	let mut buffer_access = staging_buffer.buffer_access(0, 0..size)?;
+	let mut buffer_access = staging_buffer.buffer_access(0, ..)?;
 
 	for bytes in bytes_of_images.iter() {
 		debug_assert_eq!(bytes.len(), buffer_access.write(&bytes[..])?);
@@ -91,6 +91,8 @@ pub fn load_gui<'vk_core, 'memory>(
 		image_barriers.push(barrier);
 	}
 
+	eprintln!("still work.");
+
 	command_recorder
 		.barriers(
 			(vk::PipelineStageFlags::TOP_OF_PIPE, vk::PipelineStageFlags::TRANSFER),
@@ -102,7 +104,7 @@ pub fn load_gui<'vk_core, 'memory>(
 	for (image, bytes) in images.image_iter().zip(bytes_of_images.iter()) {
 		command_recorder
 			.buffer_to_image(
-				staging_buffer.ref_buffer(0),
+				staging_buffer.buffer_ref(0),
 				(image, 0),
 				&[
 					vk::BufferImageCopy {
@@ -193,6 +195,5 @@ pub fn load_gui<'vk_core, 'memory>(
 	let mut access = buffer_memory.buffer_access(0, ..)?;
 
 	drop(access);
-
-	unimplemented!()
+	Ok(())
 }

@@ -19,8 +19,10 @@ pub struct LogicalBuffer<'vk_core> {
 	memory_requirements: vk::MemoryRequirements,
 }
 
-pub struct Buffer<'vk_core> {
-	logical: LogicalBuffer<'vk_core>,
+/// The Ownership of this struct never be obtained outside of this module.
+/// Only references can be obtained. Thus, lifetime is not need.
+pub struct Buffer {
+	raw_handle: vk::Buffer,
 	range: Range<vk::DeviceSize>,
 }
 
@@ -36,15 +38,23 @@ pub struct LogicalImage<'vk_core> {
 	memory_requirements: vk::MemoryRequirements,
 }
 
-pub struct Image<'vk_core> {
-	logical: LogicalImage<'vk_core>,
+/// The Ownership of this struct never be obtained outside of this module.
+/// Only references can be obtained. Thus, lifetime is not need.
+pub struct Image {
+	raw_handle: vk::Image,
+	extent: vk::Extent3D,
+	format: vk::Format,
+	layout: Vec<vk::ImageLayout>,
+	aspect_mask: vk::ImageAspectFlags,
+	mip_levels: u32,
+	array_layers: u32,
 	view: vk::ImageView,
 	range: Range<vk::DeviceSize>,
 }
 
-pub struct ImageMemoryBarrier<'vk_core, 'image> {
+pub struct ImageMemoryBarrier<'image> {
 	vk: vk::ImageMemoryBarrier,
-	image_mut: &'image mut Image<'vk_core>,
+	image_mut: &'image mut Image,
 }
 
 pub struct MemoryBlock<'vk_core> {
@@ -52,8 +62,8 @@ pub struct MemoryBlock<'vk_core> {
 	raw_handle: vk::DeviceMemory,
 	size: vk::DeviceSize,
 	properties: vk::MemoryPropertyFlags,
-	buffers: Vec<Buffer<'vk_core>>,
-	images: Vec<Image<'vk_core>>,
+	buffers: Vec<Buffer>,
+	images: Vec<Image>,
 }
 
 pub struct MemoryAccess<'vk_core, 'memory> {
@@ -112,9 +122,9 @@ impl Drop for LogicalBuffer<'_> {
 	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_buffer(self.raw_handle, None); } }
 }
 
-impl<'vk_core> Buffer<'vk_core> {
+impl Buffer {
 	#[inline]
-	pub fn raw_handle(&self) -> vk::Buffer { self.logical.raw_handle }
+	pub fn raw_handle(&self) -> vk::Buffer { self.raw_handle }
 
 	#[inline]
 	pub fn size(&self) -> vk::DeviceSize { self.range.end - self.range.start }
@@ -132,8 +142,8 @@ impl<'vk_core> Buffer<'vk_core> {
 			Bound::Unbounded => self.range.start,
 		};
 		let end = match range.end_bound() {
-			Bound::Included(&n) => n,
-			Bound::Excluded(&n) => n - 1,
+			Bound::Included(&n) => n + 1,
+			Bound::Excluded(&n) => n,
 			Bound::Unbounded => self.range.end,
 		};
 
@@ -208,39 +218,6 @@ impl<'vk_core> LogicalImage<'vk_core> {
 		}
 	}
 
-	#[inline]
-	pub fn raw_handle(&self) -> vk::Image { self.raw_handle }
-
-	#[inline]
-	pub fn layout(&self, mip_level: u32) -> vk::ImageLayout {
-		debug_assert!(mip_level <= self.mip_levels);
-		self.layout[mip_level as usize]
-	}
-
-	pub fn extent(&self, mip_level: u32) -> vk::Extent3D {
-		debug_assert!(mip_level <= self.mip_levels);
-
-		let (width, height) = (0..mip_level)
-			.fold((self.extent.width, self.extent.height), |(width, height), _| {
-				(width / 2, height / 2)
-			});
-
-		vk::Extent3D {
-			width,
-			height,
-			depth: self.extent.depth,
-		}
-	}
-
-	#[inline]
-	pub fn aspect_mask(&self) -> vk::ImageAspectFlags { self.aspect_mask }
-
-	#[inline]
-	pub fn mip_levels(&self) -> u32 { self.mip_levels }
-
-	#[inline]
-	pub fn array_layers(&self) -> u32 { self.array_layers }
-
 	/// calculate maximum mip level by width and height.
 	pub fn maximum_mip_level(extent: vk::Extent3D) -> u32 {
 		let vk::Extent3D { width, height, .. } = extent;
@@ -266,33 +243,43 @@ impl Drop for LogicalImage<'_> {
 	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_image(self.raw_handle, None); } }
 }
 
-impl<'vk_core> Image<'vk_core> {
+impl Image {
 	#[inline]
-	pub fn raw_handle(&self) -> vk::Image { self.logical.raw_handle }
+	pub fn raw_handle(&self) -> vk::Image { self.raw_handle }
 
 	#[inline]
 	pub fn view(&self) -> vk::ImageView { self.view }
 
 	#[inline]
-	pub fn layout(&self, mip_level: u32) -> vk::ImageLayout { self.logical.layout(mip_level) }
+	pub fn layout(&self, mip_level: u32) -> vk::ImageLayout { self.layout[mip_level as usize] }
 
-	#[inline]
-	pub fn extent(&self, mip_level: u32) -> vk::Extent3D { self.logical.extent(mip_level) }
+	pub fn extent(&self, mip_level: u32) -> vk::Extent3D {
+		let (width, height) = (0..mip_level)
+			.fold((self.extent.width, self.extent.height), |(width, height), _| {
+				(width / 2, height / 2)
+			});
+
+		vk::Extent3D {
+			width,
+			height,
+			depth: self.extent.depth,
+		}
+	}
 
 	#[inline]
 	pub fn extent_tuple(&self, mip_level: u32) -> (i32, i32, i32) {
-		let extent = self.logical.extent(mip_level);
+		let extent = self.extent(mip_level);
 		(extent.width as i32, extent.height as i32, extent.depth as i32)
 	}
 
 	#[inline]
-	pub fn aspect_mask(&self) -> vk::ImageAspectFlags { self.logical.aspect_mask }
+	pub fn aspect_mask(&self) -> vk::ImageAspectFlags { self.aspect_mask }
 
 	#[inline]
-	pub fn mip_levels(&self) -> u32 { self.logical.mip_levels }
+	pub fn mip_levels(&self) -> u32 { self.mip_levels }
 
 	#[inline]
-	pub fn array_layers(&self) -> u32 { self.logical.array_layers }
+	pub fn array_layers(&self) -> u32 { self.array_layers }
 
 	#[inline]
 	pub fn transit_layout(
@@ -300,7 +287,7 @@ impl<'vk_core> Image<'vk_core> {
 		mip_level: u32,
 		new_layout: vk::ImageLayout,
 	) -> vk::ImageLayout {
-		mem::replace(&mut self.logical.layout[mip_level as usize], new_layout)
+		mem::replace(&mut self.layout[mip_level as usize], new_layout)
 	}
 
 	pub fn barrier<Rm, Ra>(
@@ -309,7 +296,7 @@ impl<'vk_core> Image<'vk_core> {
 		array_layer_range: &Ra,
 		new_layout: vk::ImageLayout,
 		access: (vk::AccessFlags, vk::AccessFlags),
-	) -> ImageMemoryBarrier<'vk_core, '_>
+	) -> ImageMemoryBarrier
 		where Rm: RangeBounds<u32>,
 			  Ra: RangeBounds<u32>,
 	{
@@ -319,9 +306,9 @@ impl<'vk_core> Image<'vk_core> {
 			Bound::Unbounded => 0,
 		};
 		let end_mip_level = match mip_level_range.end_bound() {
-			Bound::Included(&n) => n,
-			Bound::Excluded(&n) => n - 1,
-			Bound::Unbounded => self.logical.mip_levels,
+			Bound::Included(&n) => n + 1,
+			Bound::Excluded(&n) => n,
+			Bound::Unbounded => self.mip_levels,
 		};
 
 		let base_array_layer = match array_layer_range.start_bound() {
@@ -331,16 +318,16 @@ impl<'vk_core> Image<'vk_core> {
 		};
 
 		let end_array_layer = match array_layer_range.end_bound() {
-			Bound::Included(&n) => n,
-			Bound::Excluded(&n) => n - 1,
-			Bound::Unbounded => self.logical.array_layers,
+			Bound::Included(&n) => n + 1,
+			Bound::Excluded(&n) => n,
+			Bound::Unbounded => self.array_layers,
 		};
 
-		debug_assert!(end_mip_level < self.logical.mip_levels);
-		debug_assert!(end_array_layer < self.logical.array_layers);
+		debug_assert!(end_mip_level <= self.mip_levels);
+		debug_assert!(end_array_layer <= self.array_layers);
 
 		let barrier_info = vk::ImageMemoryBarrier {
-			s_type: StructureType::BUFFER_MEMORY_BARRIER,
+			s_type: StructureType::IMAGE_MEMORY_BARRIER,
 			p_next: ptr::null(),
 			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
 			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
@@ -365,15 +352,9 @@ impl<'vk_core> Image<'vk_core> {
 	}
 }
 
-impl Drop for Image<'_> {
-	fn drop(&mut self) {
-		unsafe { self.logical.vk_core.device.destroy_image_view(self.view, None); }
-	}
-}
-
-impl<'vk_core> ImageMemoryBarrier<'vk_core, '_> {
+impl ImageMemoryBarrier<'_> {
 	pub fn vk(&self) -> vk::ImageMemoryBarrier { self.vk }
-	pub fn image_mut(&mut self) -> &mut Image<'vk_core> { self.image_mut }
+	pub fn image_mut(&mut self) -> &mut Image { self.image_mut }
 }
 
 impl<'vk_core> MemoryBlock<'vk_core> {
@@ -454,7 +435,7 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 		&self,
 		logical_buffer: LogicalBuffer<'vk_core>,
 		offset: &mut vk::DeviceSize,
-	) -> Result<Buffer<'vk_core>, vk::Result> {
+	) -> Result<Buffer, vk::Result> {
 		let range = *offset..*offset + logical_buffer.memory_requirements.size;
 		debug_assert!(range.end <= self.size);
 		self.vk_core.device
@@ -463,7 +444,7 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 		*offset = range.end;
 		Ok(
 			Buffer {
-				logical: logical_buffer,
+				raw_handle: logical_buffer.raw_handle,
 				range,
 			}
 		)
@@ -475,7 +456,7 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 		view_type: vk::ImageViewType,
 		components: vk::ComponentMapping,
 		offset: &mut vk::DeviceSize,
-	) -> Result<Image<'vk_core>, vk::Result> {
+	) -> Result<Image, vk::Result> {
 		let range = *offset..*offset + logical_image.memory_requirements.size;
 		debug_assert!(range.end <= self.size);
 		self.vk_core.device
@@ -502,9 +483,16 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 			)?;
 
 		*offset = range.end;
+		let mut logical_image = logical_image;
 		Ok(
 			Image {
-				logical: logical_image,
+				raw_handle: logical_image.raw_handle,
+				extent: logical_image.extent,
+				format: logical_image.format,
+				layout: mem::replace(&mut logical_image.layout, Vec::new()),
+				aspect_mask: logical_image.aspect_mask,
+				mip_levels: logical_image.mip_levels,
+				array_layers: logical_image.array_layers,
 				view,
 				range,
 			}
@@ -519,17 +507,18 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 		where R: RangeBounds<vk::DeviceSize>
 	{
 		unsafe {
+			let buffer = self.buffer_ref(idx);
 			let map_range_start = match map_range.start_bound() {
 				Bound::Included(&n) => n,
 				Bound::Excluded(&n) => n + 1,
-				Bound::Unbounded => 0,
+				Bound::Unbounded => buffer.range.start,
 			};
 			let map_range_end = match map_range.end_bound() {
-				Bound::Included(&n) => n,
-				Bound::Excluded(&n) => n - 1,
-				Bound::Unbounded => 0,
+				Bound::Included(&n) => n + 1,
+				Bound::Excluded(&n) => n,
+				Bound::Unbounded => buffer.range.end,
 			};
-			debug_assert!(map_range_end <= self.ref_buffer(idx).size());
+			debug_assert!(map_range_end <= buffer.size());
 
 			let size = map_range_end - map_range_start;
 			let ptr = self.vk_core.device
@@ -555,15 +544,15 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 	}
 
 	#[inline]
-	pub fn ref_buffer(&self, idx: usize) -> &Buffer { &self.buffers[idx] }
+	pub fn buffer_ref(&self, idx: usize) -> &Buffer { &self.buffers[idx] }
 	#[inline]
-	pub fn ref_image(&self, idx: usize) -> &Image { &self.images[idx] }
+	pub fn image_ref(&self, idx: usize) -> &Image { &self.images[idx] }
 	#[inline]
 	pub fn buffer_iter(&self) -> slice::Iter<Buffer> { self.buffers.iter() }
 	#[inline]
 	pub fn image_iter(&self) -> slice::Iter<Image> { self.images.iter() }
 	#[inline]
-	pub fn image_iter_mut(&mut self) -> slice::IterMut<Image<'vk_core>> { self.images.iter_mut() }
+	pub fn image_iter_mut(&mut self) -> slice::IterMut<Image> { self.images.iter_mut() }
 }
 
 impl Drop for MemoryBlock<'_> {
@@ -579,9 +568,8 @@ impl Drop for MemoryBlock<'_> {
 impl MemoryAccess<'_, '_> {
 	pub fn skip(&mut self, n: usize) -> io::Result<usize> {
 		let min = n.min(self.mapped_memory.len());
-		let (_skipped, untouched) =
-			mem::replace(&mut self.mapped_memory, &mut []).split_at_mut(min);
-		self.mapped_memory = untouched;
+		let (_skipped, yet_rw) = mem::replace(&mut self.mapped_memory, &mut []).split_at_mut(min);
+		self.mapped_memory = yet_rw;
 		Ok(min)
 	}
 }

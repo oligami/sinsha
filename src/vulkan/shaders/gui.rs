@@ -8,6 +8,7 @@ use crate::linear_algebra::{XY, RGBA};
 
 use std::mem;
 use std::ptr;
+use std::ops;
 use std::slice;
 use std::ffi::CString;
 use std::collections::HashMap;
@@ -35,14 +36,20 @@ pub struct Extent2D<T> {
 // 動かしたい。
 // CPUから描画範囲を知りたい。
 // window resize のときに必要な情報が欲しい。原点の場所とか
-pub struct Rect2Ds<'vk_core, 'texture> {
+pub struct Rect2Ds<'vk_core> {
 	pixel_extent: Extent2D<i32>,
 	origin: XY,
 	normalized_extent: Extent2D<f32>,
 	vertex_buffers: MemoryBlock<'vk_core>,
-	textures: &'texture MemoryBlock<'vk_core>,
-	descriptor_sets: DescriptorSets<'vk_core>,
+	textures: MemoryBlock<'vk_core>,
+	descriptor_sets: DescriptorPool<'vk_core>,
 	push_constants: Vec<PushConstant>,
+}
+
+pub struct Rect2D<'vertex, 'texture> {
+	vertex_buffer: &'vertex Buffer,
+	texture: &'texture DescriptorSets,
+	color_and_origin: PushConstant,
 }
 
 impl Default for Vertex {
@@ -124,66 +131,89 @@ pub const BOTTOM_LEFT: XY = XY::new(-1.0, 1.0);
 pub const BOTTOM_CENTER: XY = XY::new(0.0, 1.0);
 pub const BOTTOM_RIGHT: XY = XY::new(1.0, 1.0);
 
-
-
-pub struct DescriptorSets<'vk_core> {
-	vk_core: &'vk_core VkCore,
-	pool: vk::DescriptorPool,
-	sets: Vec<vk::DescriptorSet>,
-	sets_per_obj: usize,
+/// The ownership of this struct never be obtained outside of this module.
+/// Only references can be obtained. Thus, lifetime doesn't need.
+pub struct DescriptorSets {
+	raw_handles: Vec<vk::DescriptorSet>,
 }
 
-impl<'vk_core> DescriptorSets<'vk_core> {
+pub struct DescriptorPool<'vk_core> {
+	vk_core: &'vk_core VkCore,
+	raw_handle: vk::DescriptorPool,
+	sets_vec: Vec<DescriptorSets>,
+}
+
+impl ops::Index<usize> for DescriptorSets {
+	type Output = vk::DescriptorSet;
+	fn index(&self, index: usize) -> &Self::Output { &self.raw_handles[index] }
+}
+
+impl<'vk_core> DescriptorPool<'vk_core> {
 	pub fn new(
 		vk_graphic: &VkGraphic<'vk_core>,
-		textures: &[(&Image<'vk_core>, &VkSampler)],
-		sets_per_obj: usize,
+		textures: &[(&Image, &VkSampler)],
 	) -> Result<Self, vk::Result> {
 		unsafe {
-			let sets_num = textures.len() * sets_per_obj;
+			let total_sets_num = textures.len() * vk_graphic.images_num();
 
 			let pool_sizes = [vk::DescriptorPoolSize {
 				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-				descriptor_count: sets_per_obj as u32,
+				descriptor_count: vk_graphic.images_num() as u32,
 			}];
 
-			let pool = vk_graphic.vk_core.device
+			let raw_handle = vk_graphic.vk_core.device
 				.create_descriptor_pool(
 					&vk::DescriptorPoolCreateInfo {
 						s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
 						p_next: ptr::null(),
 						flags: vk::DescriptorPoolCreateFlags::empty(),
-						max_sets: sets_num as u32,
+						max_sets: total_sets_num as u32,
 						pool_size_count: pool_sizes.len() as u32,
 						p_pool_sizes: pool_sizes.as_ptr(),
 					},
 					None,
 				)?;
 
-			let set_layouts = vec![vk_graphic.shaders.gui.descriptor_set_layout; sets_num];
+			// NOTE: Allocate many times may make performance worse.
+			// Allocate once and operate Vec may be better.
+			let mut sets_vec = Vec::with_capacity(textures.len());
+			let set_layouts = vec![
+				vk_graphic.shaders.gui.descriptor_set_layout;
+				vk_graphic.images_num()
+			];
+			for _i in 0..textures.len() {
+				let sets = vk_graphic.vk_core.device
+					.allocate_descriptor_sets(
+						&vk::DescriptorSetAllocateInfo {
+							s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+							p_next: ptr::null(),
+							descriptor_pool: raw_handle,
+							descriptor_set_count: set_layouts.len() as u32,
+							p_set_layouts: set_layouts.as_ptr(),
+						}
+					)?;
 
-			let sets = vk_graphic.vk_core.device
-				.allocate_descriptor_sets(
-					&vk::DescriptorSetAllocateInfo {
-						s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-						p_next: ptr::null(),
-						descriptor_pool: pool,
-						descriptor_set_count: set_layouts.len() as u32,
-						p_set_layouts: set_layouts.as_ptr(),
-					}
-				)?;
+				sets_vec.push(DescriptorSets { raw_handles: sets });
+			}
 
-			let image_writes: Vec<_> = textures
+			let mut write_sets = Vec::with_capacity(total_sets_num);
+			let image_write_infos = textures
 				.iter()
-				.map(|(image, sampler)| vk::DescriptorImageInfo {
-					image_view: image.view(),
-					image_layout: image.layout(0),
-					sampler: sampler.raw_handle,
-				})
-				.collect();
-			let mut write_sets = Vec::with_capacity(sets_num);
-			for (image_write, sets) in image_writes.iter().zip(sets.chunks(sets_per_obj)) {
-				for &set in sets.iter() {
+				.fold(
+					Vec::with_capacity(total_sets_num),
+					|mut infos, (image, sampler)| {
+						infos.push(
+							vk::DescriptorImageInfo {
+								image_view: image.view(),
+								image_layout: image.layout(0),
+								sampler: sampler.raw_handle,
+							}
+						);
+						infos
+					}
+				);
+			for (image_write, sets) in image_write_infos.iter().zip(sets_vec.iter()) {
+				for &set in sets.raw_handles.iter() {
 					write_sets.push(
 						vk::WriteDescriptorSet {
 							s_type: StructureType::WRITE_DESCRIPTOR_SET,
@@ -205,21 +235,23 @@ impl<'vk_core> DescriptorSets<'vk_core> {
 			Ok(
 				Self {
 					vk_core: vk_graphic.vk_core,
-					pool,
-					sets,
-					sets_per_obj,
+					raw_handle,
+					sets_vec,
 				}
 			)
 		}
 	}
-
-	pub fn get(&self, obj_index: usize, image_index: usize) -> vk::DescriptorSet {
-		self.sets[obj_index * self.sets_per_obj + image_index]
-	}
 }
 
-impl Drop for DescriptorSets<'_> {
-	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_descriptor_pool(self.pool, None); } }
+impl ops::Index<usize> for DescriptorPool<'_> {
+	type Output = DescriptorSets;
+	fn index(&self, index: usize) -> &Self::Output { &self.sets_vec[index] }
+}
+
+impl Drop for DescriptorPool<'_> {
+	fn drop(&mut self) {
+		unsafe { self.vk_core.device.destroy_descriptor_pool(self.raw_handle, None); }
+	}
 }
 
 pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {

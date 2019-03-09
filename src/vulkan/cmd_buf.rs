@@ -10,14 +10,14 @@ use std::slice;
 use std::marker::PhantomData;
 use std::ops::{Index, IndexMut, Range};
 
-struct Commandbuffers<'vk_core> {
+pub struct CommandBuffers<'vk_core> {
 	vk_core: &'vk_core VkCore,
 	pool: vk::CommandPool,
 	raw_buffers: Vec<vk::CommandBuffer>,
 }
 
 pub struct CommandRecorder<'vk_core, 'cmd_buf> {
-	command_buffers: &'cmd_buf mut Commandbuffers<'vk_core>,
+	command_buffers: &'cmd_buf mut CommandBuffers<'vk_core>,
 	index: usize,
 }
 
@@ -30,7 +30,7 @@ pub struct GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, T> {
 	_marker: PhantomData<T>,
 }
 
-impl<'vk_core> Commandbuffers<'vk_core> {
+impl<'vk_core> CommandBuffers<'vk_core> {
 	pub fn new(
 		vk_core: &'vk_core VkCore,
 		cmd_pool_flags: vk::CommandPoolCreateFlags,
@@ -98,16 +98,16 @@ impl<'vk_core> Commandbuffers<'vk_core> {
 	}
 }
 
-impl Index<usize> for Commandbuffers<'_> {
+impl Index<usize> for CommandBuffers<'_> {
 	type Output = vk::CommandBuffer;
 	fn index(&self, index: usize) -> &vk::CommandBuffer { &self.raw_buffers[index] }
 }
 
-impl IndexMut<usize> for Commandbuffers<'_> {
+impl IndexMut<usize> for CommandBuffers<'_> {
 	fn index_mut(&mut self, index: usize) -> &mut vk::CommandBuffer { &mut self.raw_buffers[index] }
 }
 
-impl Drop for Commandbuffers<'_> {
+impl Drop for CommandBuffers<'_> {
 	fn drop(&mut self) { unsafe { self.vk_core.device.destroy_command_pool(self.pool, None); } }
 }
 
@@ -154,7 +154,7 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 		&mut self,
 		stage: (vk::PipelineStageFlags, vk::PipelineStageFlags),
 		buffer_barriers: &[vk::BufferMemoryBarrier],
-		image_barriers: &mut [ImageMemoryBarrier<'vk_core, '_>],
+		image_barriers: &mut [ImageMemoryBarrier],
 	) -> &mut Self {
 		unsafe {
 			let image_barriers: Vec<_> = image_barriers
@@ -187,7 +187,7 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 
 	pub fn blit_image(
 		&mut self,
-		(src_image, dst_image): (&Image<'vk_core>, &Image<'vk_core>),
+		(src_image, dst_image): (&Image, &Image),
 		(src_mip_level, dst_mip_level): (u32, u32),
 		(src_array_layer_range, dst_array_layer_range): (&Range<u32>, &Range<u32>),
 		(src_extent, dst_extent): (&Range<(i32, i32, i32)>, &Range<(i32, i32, i32)>),
@@ -252,7 +252,7 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 		ref wait_dst_stage_mask: vk::PipelineStageFlags,
 		wait_semaphores: &[VkSemaphore],
 		signal_semaphores: &[VkSemaphore],
-		signal_fence: &VkFence,
+		signal_fence: Option<&VkFence<'vk_core>>,
 	) -> Result<(), vk::Result> {
 		unsafe {
 			self.command_buffers.vk_core.device
@@ -272,7 +272,7 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 						signal_semaphore_count: signal_semaphores.len() as u32,
 						p_signal_semaphores: signal_semaphores.as_ptr() as *const _,
 					}],
-					signal_fence.raw_handle,
+					signal_fence.map(|f| f.raw_handle).unwrap_or(vk::Fence::null()),
 				)?;
 
 			Ok(())
@@ -280,11 +280,3 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 	}
 }
 
-impl Drop for CommandRecorder<'_, '_> {
-	fn drop(&mut self) {
-		unsafe {
-			self.command_buffers.vk_core.device
-				.destroy_command_pool(self.command_buffers.pool, None);
-		}
-	}
-}

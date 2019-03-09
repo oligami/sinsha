@@ -46,6 +46,20 @@ impl Engine {
 		events_loop: &mut EventsLoop,
 	) {
 		let mut interaction_devices = InteractionDevices::new(window);
+		let mut command_buffers = CommandBuffers::new(
+			vk_core,
+			vk::CommandPoolCreateFlags::TRANSIENT,
+			vk::CommandBufferLevel::PRIMARY,
+		).unwrap();
+
+		let mut command_recorder = command_buffers
+			.recorder(0, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT).unwrap();
+		let fence = VkFence::new(vk_core, false).unwrap();
+		start_menu::load_gui(vk_core, &mut command_recorder).unwrap();
+		command_recorder
+			.queue_submit(vk::PipelineStageFlags::empty(), &[], &[], Some(&fence))
+			.unwrap();
+		fence.wait(None).unwrap();
 
 		loop {
 			let mut close_requested = false;
