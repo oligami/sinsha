@@ -22,7 +22,7 @@ pub struct Vertex {
 }
 
 #[repr(C)]
-struct PushConstant(RGBA, XY);
+pub struct PushConstant(RGBA, XY);
 
 #[derive(Copy, Clone, Debug)]
 pub struct Extent2D<T> {
@@ -32,21 +32,8 @@ pub struct Extent2D<T> {
 	pub left: T,
 }
 
-// 文字用に色を変えたい。
-// 動かしたい。
-// CPUから描画範囲を知りたい。
-// window resize のときに必要な情報が欲しい。原点の場所とか
-pub struct Rect2Ds<'vk_core> {
-	pixel_extent: Extent2D<i32>,
-	origin: XY,
-	normalized_extent: Extent2D<f32>,
-	vertex_buffers: MemoryBlock<'vk_core>,
-	textures: MemoryBlock<'vk_core>,
-	descriptor_sets: DescriptorPool<'vk_core>,
-	push_constants: Vec<PushConstant>,
-}
-
 pub struct Rect2D<'vertex, 'texture> {
+	vertex_offset: u32,
 	vertex_buffer: &'vertex Buffer,
 	texture: &'texture DescriptorSets,
 	color_and_origin: PushConstant,
@@ -66,8 +53,15 @@ impl Vertex {
 	pub const fn new(color: RGBA, position: XY, texture: XY) -> Self {
 		Self { color, position, texture }
 	}
+}
 
-	pub fn size(n: usize) -> vk::DeviceSize { (mem::size_of::<Self>() * n) as vk::DeviceSize }
+impl AsRef<[u8]> for Vertex {
+	fn as_ref(&self) -> &[u8] {
+		unsafe {
+			let ptr = self as *const _ as *const u8;
+			slice::from_raw_parts(ptr, mem::size_of::<Self>())
+		}
+	}
 }
 
 impl AsRef<[u8]> for PushConstant {
@@ -130,6 +124,35 @@ pub const RIGHT_CENTER: XY = XY::new(-1.0, 0.0);
 pub const BOTTOM_LEFT: XY = XY::new(-1.0, 1.0);
 pub const BOTTOM_CENTER: XY = XY::new(0.0, 1.0);
 pub const BOTTOM_RIGHT: XY = XY::new(1.0, 1.0);
+
+
+impl<'vertex, 'texture> Rect2D<'vertex, 'texture> {
+	pub fn new(
+		vertex_buffer: &'vertex Buffer,
+		texture: &'texture DescriptorSets,
+		color_and_origin: PushConstant,
+	) -> Self {
+		let range = vertex_buffer.range();
+		let vertex_offset = (range.start / mem::size_of::<[Vertex; 4]>() as u64) as _;
+		debug_assert_eq!(0, range.start % mem::size_of::<[Vertex; 4]>() as u64);
+
+		Self {
+			vertex_offset,
+			vertex_buffer,
+			texture,
+			color_and_origin,
+		}
+	}
+
+	#[inline]
+	pub fn vertex_offset(&self) -> u32 { self.vertex_offset }
+	#[inline]
+	pub fn vertex_buffer(&self) -> &Buffer { &self.vertex_buffer }
+	#[inline]
+	pub fn texture(&self) -> &DescriptorSets { &self.texture }
+	#[inline]
+	pub fn color_and_origin(&self) -> &PushConstant { &self.color_and_origin }
+}
 
 /// The ownership of this struct never be obtained outside of this module.
 /// Only references can be obtained. Thus, lifetime doesn't need.

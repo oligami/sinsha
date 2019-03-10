@@ -50,16 +50,42 @@ impl Engine {
 			vk_core,
 			vk::CommandPoolCreateFlags::TRANSIENT,
 			vk::CommandBufferLevel::PRIMARY,
+			1,
 		).unwrap();
 
 		let mut command_recorder = command_buffers
 			.recorder(0, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT).unwrap();
 		let fence = VkFence::new(vk_core, false).unwrap();
-		start_menu::load_gui(vk_core, &mut command_recorder).unwrap();
-		command_recorder
-			.queue_submit(vk::PipelineStageFlags::empty(), &[], &[], Some(&fence))
+		let [staging_buffer, textures, vertex_buffer] =
+			start_menu::load_gui(vk_core, &mut command_recorder).unwrap();
+		command_recorder.end().unwrap();
+		command_buffers
+			.queue_submit(0, vk::PipelineStageFlags::empty(), &[], &[], Some(&fence))
 			.unwrap();
 		fence.wait(None).unwrap();
+		drop(command_buffers);
+
+		let sampler = VkSampler::new(
+			vk_core,
+			(vk::Filter::LINEAR, vk::Filter::NEAREST),
+			vk::SamplerAddressMode::REPEAT,
+			vk::SamplerAddressMode::REPEAT,
+			vk::SamplerAddressMode::REPEAT,
+			vk::BorderColor::FLOAT_OPAQUE_BLACK,
+			vk::SamplerMipmapMode::NEAREST,
+			0.0,
+			0.0..10.0,
+			None,
+			None,
+			vk::FALSE,
+		).unwrap();
+
+		let descriptor_pool = gui::DescriptorPool::new(
+			vk_graphic,
+			&[(textures.image_ref(0), &sampler)],
+		).unwrap();
+
+
 
 		loop {
 			let mut close_requested = false;

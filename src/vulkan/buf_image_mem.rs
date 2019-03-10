@@ -126,6 +126,8 @@ impl Buffer {
 	#[inline]
 	pub fn raw_handle(&self) -> vk::Buffer { self.raw_handle }
 
+	pub fn range(&self) -> &Range<vk::DeviceSize> { &self.range }
+
 	#[inline]
 	pub fn size(&self) -> vk::DeviceSize { self.range.end - self.range.start }
 
@@ -292,8 +294,8 @@ impl Image {
 
 	pub fn barrier<Rm, Ra>(
 		&mut self,
-		mip_level_range: &Rm,
-		array_layer_range: &Ra,
+		mip_level_range: Rm,
+		array_layer_range: Ra,
 		new_layout: vk::ImageLayout,
 		access: (vk::AccessFlags, vk::AccessFlags),
 	) -> ImageMemoryBarrier
@@ -442,12 +444,10 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 			.bind_buffer_memory(logical_buffer.raw_handle, self.raw_handle, *offset)?;
 
 		*offset = range.end;
-		Ok(
-			Buffer {
-				raw_handle: logical_buffer.raw_handle,
-				range,
-			}
-		)
+		let buffer = Buffer { raw_handle: logical_buffer.raw_handle, range };
+		mem::forget(logical_buffer);
+
+		Ok(buffer)
 	}
 
 	unsafe fn bind_image(
@@ -484,19 +484,20 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 
 		*offset = range.end;
 		let mut logical_image = logical_image;
-		Ok(
-			Image {
-				raw_handle: logical_image.raw_handle,
-				extent: logical_image.extent,
-				format: logical_image.format,
-				layout: mem::replace(&mut logical_image.layout, Vec::new()),
-				aspect_mask: logical_image.aspect_mask,
-				mip_levels: logical_image.mip_levels,
-				array_layers: logical_image.array_layers,
-				view,
-				range,
-			}
-		)
+		let image = Image {
+			raw_handle: logical_image.raw_handle,
+			extent: logical_image.extent,
+			format: logical_image.format,
+			layout: mem::replace(&mut logical_image.layout, Vec::new()),
+			aspect_mask: logical_image.aspect_mask,
+			mip_levels: logical_image.mip_levels,
+			array_layers: logical_image.array_layers,
+			view,
+			range,
+		};
+		mem::forget(logical_image);
+
+		Ok(image)
 	}
 
 	pub fn buffer_access<'memory, R>(
@@ -558,6 +559,17 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 impl Drop for MemoryBlock<'_> {
 	fn drop(&mut self) {
 		unsafe {
+			self.buffers
+				.iter()
+				.for_each(|buffer| self.vk_core.device.destroy_buffer(buffer.raw_handle, None));
+
+			self.images
+				.iter()
+				.for_each(|image| {
+					self.vk_core.device.destroy_image(image.raw_handle, None);
+					self.vk_core.device.destroy_image_view(image.view, None);
+				});
+
 			self.vk_core.device.free_memory(self.raw_handle, None);
 		}
 

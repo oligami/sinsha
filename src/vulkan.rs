@@ -501,16 +501,12 @@ impl<'vk_core> VkGraphic<'vk_core> {
 impl Drop for VkGraphic<'_> {
 	fn drop(&mut self) {
 		unsafe {
-			eprintln!("Dropping VkGraphic.");
-			eprintln!("Dropping Framebuffers.");
 			self.framebuffers
 				.iter()
 				.for_each(|&framebuffer| {
 					self.vk_core.device.destroy_framebuffer(framebuffer, None);
 				});
-			eprintln!("Dropping Render pass.");
 			self.vk_core.device.destroy_render_pass(self.render_pass, None);
-			eprintln!("Dropping Swapchain images and views.");
 			self.swapchain.images
 				.iter()
 				.for_each(|&(_image, view)| {
@@ -518,14 +514,12 @@ impl Drop for VkGraphic<'_> {
 					// image will destroyed by destroying swapchain.
 					self.vk_core.device.destroy_image_view(view, None);
 				});
-			eprintln!("Dropping SwapchainKHR.");
 			self.swapchain.loader.destroy_swapchain(self.swapchain.raw_handle, None);
 			self.vk_core.device.destroy_pipeline(self.shaders.gui.pipeline, None);
 			self.vk_core.device.destroy_pipeline_layout(self.shaders.gui.pipeline_layout, None);
 			self.vk_core.device
 				.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
 		}
-		eprintln!("Dropped VkGraphic.");
 	}
 }
 
