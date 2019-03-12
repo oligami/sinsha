@@ -15,7 +15,7 @@ use std::error::Error;
 pub fn load_gui<'vk_core, 'memory>(
 	vk_core: &'vk_core VkCore,
 	command_recorder: &mut CommandRecorder<'vk_core, '_>,
-) -> Result<[MemoryBlock<'vk_core>; 3], Box<dyn Error>> {
+) -> Result<[MemoryBlock<'vk_core>; 2], Box<dyn Error>> {
 	let texture_path_root = "assets/textures";
 
 	let texture_pathes = [
@@ -85,13 +85,6 @@ pub fn load_gui<'vk_core, 'memory>(
 	access.flush()?;
 	drop(access);
 
-	// create memory for images.
-	let mut images = MemoryBlock::new(
-		vk_core,
-		vec![],
-		logical_images,
-		vk::MemoryPropertyFlags::DEVICE_LOCAL,
-	)?;
 
 	// create memory for vertex buffers
 	let logical_buffer = LogicalBuffer::new(
@@ -100,10 +93,13 @@ pub fn load_gui<'vk_core, 'memory>(
 		vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
 		vk::SharingMode::EXCLUSIVE,
 	)?;
-	let vertex_buffer = MemoryBlock::new(
+
+
+	// create memory for images.
+	let mut images = MemoryBlock::new(
 		vk_core,
 		vec![logical_buffer],
-		vec![],
+		logical_images,
 		vk::MemoryPropertyFlags::DEVICE_LOCAL,
 	)?;
 
@@ -154,16 +150,6 @@ pub fn load_gui<'vk_core, 'memory>(
 		offset += offset + bytes.len() as u64;
 	}
 
-	// record command to transfer data from buffer to buffer.
-	command_recorder.buffer_to_buffer(
-		staging_buffer.buffer_ref(0),
-		vertex_buffer.buffer_ref(0),
-		&[vk::BufferCopy {
-			src_offset: offset,
-			dst_offset: 0,
-			size: buffer_size as _,
-		}],
-	);
 
 	for image in images.image_iter_mut() {
 		for mip_level in 0..image.mip_levels() - 1 {
@@ -213,5 +199,5 @@ pub fn load_gui<'vk_core, 'memory>(
 			);
 	}
 
-	Ok([staging_buffer, images, vertex_buffer])
+	Ok([staging_buffer, images])
 }

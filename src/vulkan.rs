@@ -1,3 +1,4 @@
+mod mem;
 mod buf_image_mem;
 mod cmd_buf;
 mod shaders;
@@ -8,21 +9,20 @@ pub use crate::vulkan::cmd_buf::*;
 
 use crate::linear_algebra::*;
 
-use ash::version::EntryV1_0;
-use ash::version::InstanceV1_0;
-use ash::version::DeviceV1_0;
-use ash::extensions::khr;
 use ash::vk;
 use ash::vk::StructureType;
 use ash::vk_make_version;
+use ash::extensions::khr;
 use ash::Entry;
 use ash::Instance;
 use ash::Device;
+use ash::version::EntryV1_0;
+use ash::version::InstanceV1_0;
+use ash::version::DeviceV1_0;
 
 use winit::Window;
 
 use std::ptr;
-use std::mem;
 use std::ffi::CString;
 use std::default::Default;
 use std::marker::PhantomData;
@@ -42,9 +42,9 @@ struct Surface {
 pub struct VkCore {
 	entry: Entry,
 	instance: Instance,
-	pub device: Device,
-	pub queue: vk::Queue,
-	pub physical_device: PhysicalDevice,
+	device: Device,
+	queue: vk::Queue,
+	physical_device: PhysicalDevice,
 	surface: Surface,
 }
 
@@ -226,6 +226,10 @@ impl VkCore {
 
 	pub fn queue_wait_idle(&self) -> Result<(), vk::Result> {
 		unsafe { self.device.queue_wait_idle(self.queue) }
+	}
+
+	pub fn memory_properties(&self) -> vk::PhysicalDeviceMemoryProperties {
+		self.physical_device.memory_properties
 	}
 }
 
@@ -627,7 +631,7 @@ impl<'vk_core> VkSemaphore<'vk_core> {
 	pub fn drop(self, vk_core: &VkCore) {
 		unsafe {
 			vk_core.device.destroy_semaphore(self.raw_handle, None);
-			mem::forget(self);
+			std::mem::forget(self);
 		}
 	}
 }

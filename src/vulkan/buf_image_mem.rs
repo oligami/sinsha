@@ -101,6 +101,7 @@ impl<'vk_core> LogicalBuffer<'vk_core> {
 			)?;
 
 			let memory_requirements = vk_core.device.get_buffer_memory_requirements(raw_handle);
+			eprintln!("Memory requirements of a buffer: {:?}", memory_requirements);
 
 			Ok(
 				Self {
@@ -203,6 +204,7 @@ impl<'vk_core> LogicalImage<'vk_core> {
 			)?;
 
 			let memory_requirements = vk_core.device.get_image_memory_requirements(image);
+			eprintln!("Memory requirements of an image: {:?}", memory_requirements);
 
 			Ok(
 				Self {

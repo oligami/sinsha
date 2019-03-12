@@ -20,6 +20,17 @@ impl Engine {
 		let vk_core = VkCore::new(&window);
 		let mut vk_graphic = VkGraphic::new(&vk_core);
 
+		let mem_prop = vk_core.memory_properties();
+		eprintln!("types: {}, heaps: {}", mem_prop.memory_type_count, mem_prop.memory_heap_count);
+		mem_prop.memory_types
+			.iter()
+			.zip([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].iter())
+			.for_each(|(ty, i)| eprintln!("type{}: {:?}", i, ty));
+		mem_prop.memory_heaps
+			.iter()
+			.zip([0, 1].iter())
+			.for_each(|(heap, i)| eprintln!("heap{}: {:?}", i, heap));
+
 		Engine::start_menu(&vk_core, &mut vk_graphic, &window, &mut events_loop);
 	}
 }
@@ -56,7 +67,7 @@ impl Engine {
 		let mut command_recorder = command_buffers
 			.recorder(0, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT).unwrap();
 		let fence = VkFence::new(vk_core, false).unwrap();
-		let [staging_buffer, textures, vertex_buffer] =
+		let [staging_buffer, textures] =
 			start_menu::load_gui(vk_core, &mut command_recorder).unwrap();
 		command_recorder.end().unwrap();
 		command_buffers

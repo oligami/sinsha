@@ -98,8 +98,6 @@ impl<'vk_core> CommandBuffers<'vk_core> {
 		signal_fence: Option<&VkFence<'vk_core>>,
 	) -> Result<(), vk::Result> {
 		unsafe {
-			self.vk_core.device.end_command_buffer(self[index])?;
-
 			self.vk_core.device
 				.queue_submit(
 					self.vk_core.queue,
@@ -339,6 +337,7 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 		unsafe {
 			self.command_buffers.vk_core.device
 				.end_command_buffer(self.command_buffers[self.index])?;
+			std::mem::forget(self);
 			Ok(())
 		}
 	}
@@ -351,13 +350,18 @@ impl Drop for CommandRecorder<'_, '_> {
 }
 
 impl<'vk_core, 'vk_graphic, 'cmd_buf, T> GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, T> {
-	fn transit<U>(self) -> GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, U> {
-		let pre = mem::ManuallyDrop::new(self);
-		GraphicCommandRecorder {
-			command_recorder: pre.command_recorder,
-			vk_graphic: pre.vk_graphic,
-			_marker: PhantomData::<U>,
+	fn transit<U>(mut self) -> GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, U> {
+		unsafe {
+			let graphic_command_recorder = GraphicCommandRecorder {
+				command_recorder: mem::replace(&mut self.command_recorder, mem::uninitialized()),
+				vk_graphic: self.vk_graphic,
+				_marker: PhantomData::<U>,
+			};
+			mem::forget(self);
+
+			graphic_command_recorder
 		}
+
 	}
 
 	pub fn bind_gui_pipeline(self) -> GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, Gui> {
