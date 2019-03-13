@@ -6,12 +6,13 @@ use crate::vulkan::VkCore;
 
 use std::ptr;
 use std::ops;
-use std::sync;
+use std::fmt;
+use std::error::Error;
 use std::path::Path;
 
 pub struct VkAlloc<'vk_core> {
     vk_core: &'vk_core VkCore,
-    memories: Vec<sync::RwLock<Memory>>,
+    memories: Vec<Memory>,
 }
 
 pub struct Memory {
@@ -70,10 +71,20 @@ pub struct ImageHandle {
 	image_index: usize,
 }
 
+#[derive(Debug)]
 pub enum AllocErr {
 	VkErr(vk::Result),
 	NoValidMemoryType,
-	MemoryPoisoned(usize),
+}
+
+impl Error for AllocErr {}
+impl fmt::Display for AllocErr {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match self {
+			AllocErr::VkErr(err) => write!(f, "vk::Result: {}", err),
+			AllocErr::NoValidMemoryType => write!(f, "Valid memory type was not found."),
+		}
+	}
 }
 
 impl<'vk_core> VkAlloc<'vk_core> {
@@ -82,7 +93,7 @@ impl<'vk_core> VkAlloc<'vk_core> {
 			if memory_type.property_flags.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL) {
 				0x1000_0000
 			} else {
-				0x400_000
+				0x400_0000
 			}
 		})
 	}
@@ -102,14 +113,14 @@ impl<'vk_core> VkAlloc<'vk_core> {
 				images: Vec::new(),
 			};
 
-			memories.push(sync::RwLock::new(memory));
+			memories.push(memory);
 		}
 
 		Self { vk_core, memories }
 	}
 
 	pub fn push_buffer(
-		&self,
+		&mut self,
 		size: vk::DeviceSize,
 		usage: vk::BufferUsageFlags,
 		sharing_mode: vk::SharingMode,
@@ -143,24 +154,134 @@ impl<'vk_core> VkAlloc<'vk_core> {
 				memory_properties,
 			).ok_or(AllocErr::NoValidMemoryType)? as usize;
 
-			let reader = self.memories[memory_type_index]
-				.read()
-				.map_err(|err| AllocErr::MemoryPoisoned(memory_type_index))?;
-
-			match reader.blocks.last() {
+			let buffer_opt = match self.memories[memory_type_index].blocks.last_mut() {
 				Some(block) => {
 					// bind memory. be careful about alignment and offset.
-					unimplemented!()
+					let new_offset = if block.stack_offset % memory_requirements.alignment != 0 {
+						(block.stack_offset / memory_requirements.alignment + 1)
+							* memory_requirements.alignment
+					} else {
+						block.stack_offset
+					};
+
+					let range_end = new_offset + memory_requirements.size;
+					if range_end < block.size {
+						block.stack_offset = new_offset;
+						self.vk_core.device
+							.bind_buffer_memory(buffer, block.raw_handle, block.stack_offset)
+							.map_err(|err| AllocErr::VkErr(err))?;
+
+						Some(
+							Buffer {
+								raw_handle: buffer,
+								data_blocks: Vec::new(),
+								range: block.stack_offset..range_end
+							}
+						)
+					} else {
+						None
+					}
 				}
+				None => None,
+			};
+
+			let buffer = match buffer_opt {
+				Some(buffer) => buffer,
 				None => {
-					// allocate new memory and bind.
-					unimplemented!()
+					let allocation_size = self.memories[memory_type_index].block_size
+						.max(memory_requirements.size);
+
+					let new_block = self.vk_core.device
+						.allocate_memory(
+							&vk::MemoryAllocateInfo {
+								s_type: StructureType::MEMORY_ALLOCATE_INFO,
+								p_next: ptr::null(),
+								allocation_size,
+								memory_type_index: memory_type_index as _,
+							},
+							None,
+						)
+						.map_err(|err| AllocErr::VkErr(err))?;
+
+					self.memories[memory_type_index].blocks.push(
+						MemoryBlock {
+							raw_handle: new_block,
+							size: allocation_size,
+							stack_offset: 0,
+						}
+					);
+
+					self.vk_core.device
+						.bind_buffer_memory(buffer, new_block, 0)
+						.map_err(|err| AllocErr::VkErr(err))?;
+
+					Buffer {
+						raw_handle: buffer,
+						data_blocks: Vec::new(),
+						range: 0..memory_requirements.size,
+					}
 				}
-			}
+			};
 
+			self.memories[memory_type_index].buffers.push(buffer);
+			let buffer_index = self.memories[memory_type_index].buffers.len() - 1;
+			self.memories[memory_type_index].resources.push(Resource::Buffer(buffer_index));
+
+			Ok(BufferHandle { memory_type_index, buffer_index })
 		}
+	}
 
+	pub fn push_image(
+		&mut self,
+		image_type: vk::ImageType,
+		extent: vk::Extent3D,
+		format: vk::Format,
+		usage: vk::ImageUsageFlags,
+		sharing_mode: vk::SharingMode,
+		initial_layout: vk::ImageLayout,
+		sample_count: vk::SampleCountFlags,
+		aspect_mask: vk::ImageAspectFlags,
+		mip_levels: u32,
+		array_layers: u32,
+		view_type: vk::ImageViewType,
+		components: vk::ComponentMapping,
+	) -> Result<ImageHandle, AllocErr> {
+		unsafe {
+			unimplemented!()
+		}
+	}
+
+	pub fn push_data<D>(&mut self, data: D) -> Result<DataHandle, AllocErr> where D: AsRef<[u8]> {
 		unimplemented!()
+	}
+
+	pub fn pop(&mut self) -> Resource {
+		unimplemented!()
+	}
+}
+
+impl Drop for VkAlloc<'_> {
+	fn drop(&mut self) {
+		unsafe {
+			self.memories
+				.iter()
+				.for_each(|memory| {
+					memory.blocks
+						.iter()
+						.for_each(|block| self.vk_core.device.free_memory(block.raw_handle, None));
+					memory.buffers
+						.iter()
+						.for_each(|buffer| {
+							self.vk_core.device.destroy_buffer(buffer.raw_handle, None);
+						});
+					memory.images
+						.iter()
+						.for_each(|image| {
+							self.vk_core.device.destroy_image(image.raw_handle, None);
+							self.vk_core.device.destroy_image_view(image.view, None);
+						})
+				})
+		}
 	}
 }
 

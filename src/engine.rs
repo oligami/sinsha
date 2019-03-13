@@ -64,17 +64,15 @@ impl Engine {
 			1,
 		).unwrap();
 
-		let mut command_recorder = command_buffers
-			.recorder(0, vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT).unwrap();
-		let fence = VkFence::new(vk_core, false).unwrap();
-		let [staging_buffer, textures] =
-			start_menu::load_gui(vk_core, &mut command_recorder).unwrap();
-		command_recorder.end().unwrap();
-		command_buffers
-			.queue_submit(0, vk::PipelineStageFlags::empty(), &[], &[], Some(&fence))
+		let mut vk_alloc = mem::VkAlloc::new(vk_core);
+		let buffer_handle = vk_alloc
+			.push_buffer(
+				0x1000_0000,
+				vk::BufferUsageFlags::TRANSFER_DST,
+				vk::SharingMode::EXCLUSIVE,
+				vk::MemoryPropertyFlags::DEVICE_LOCAL,
+			)
 			.unwrap();
-		fence.wait(None).unwrap();
-		drop(command_buffers);
 
 		let sampler = VkSampler::new(
 			vk_core,
@@ -90,13 +88,6 @@ impl Engine {
 			None,
 			vk::FALSE,
 		).unwrap();
-
-		let descriptor_pool = gui::DescriptorPool::new(
-			vk_graphic,
-			&[(textures.image_ref(0), &sampler)],
-		).unwrap();
-
-
 
 		loop {
 			let mut close_requested = false;

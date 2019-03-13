@@ -1,4 +1,4 @@
-mod mem;
+pub mod mem;
 mod buf_image_mem;
 mod cmd_buf;
 mod shaders;
