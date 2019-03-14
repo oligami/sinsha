@@ -70,6 +70,24 @@ impl Engine {
 				0x1000_0000,
 				vk::BufferUsageFlags::TRANSFER_DST,
 				vk::SharingMode::EXCLUSIVE,
+				vk::MemoryPropertyFlags::HOST_VISIBLE,
+			)
+			.unwrap();
+
+		let image_handle = vk_alloc
+			.push_image(
+				vk::ImageType::TYPE_2D,
+				vk::Extent3D { width: 128, height: 128, depth: 1 },
+				vk::Format::R8G8B8A8_UNORM,
+				vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+				vk::SharingMode::EXCLUSIVE,
+				vk::ImageLayout::UNDEFINED,
+				vk::SampleCountFlags::TYPE_1,
+				vk::ImageAspectFlags::COLOR,
+				1,
+				1,
+				vk::ImageViewType::TYPE_2D,
+				vk::ComponentMapping::default(),
 				vk::MemoryPropertyFlags::DEVICE_LOCAL,
 			)
 			.unwrap();

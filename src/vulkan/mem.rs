@@ -16,7 +16,7 @@ pub struct VkAlloc<'vk_core> {
 }
 
 pub struct Memory {
-	block_size: vk::DeviceSize,
+	default_block_size: vk::DeviceSize,
     blocks: Vec<MemoryBlock>,
 	resources: Vec<Resource>,
 	buffers: Vec<Buffer>,
@@ -58,6 +58,7 @@ pub struct Image {
 
 pub struct BufferHandle {
 	memory_type_index: usize,
+	memory_block_index: usize,
 	buffer_index: usize,
 }
 
@@ -68,6 +69,7 @@ pub struct DataHandle {
 
 pub struct ImageHandle {
 	memory_type_index: usize,
+	memory_block_index: usize,
 	image_index: usize,
 }
 
@@ -106,7 +108,7 @@ impl<'vk_core> VkAlloc<'vk_core> {
 		let mut memories = Vec::with_capacity(mem_ty_count);
 		for memory_type in memory_properties.memory_types[0..mem_ty_count].iter() {
 			let memory = Memory {
-				block_size: f(memory_type),
+				default_block_size: f(memory_type),
 				blocks: Vec::new(),
 				resources: Vec::new(),
 				buffers: Vec::new(),
@@ -153,8 +155,15 @@ impl<'vk_core> VkAlloc<'vk_core> {
 				memory_requirements.memory_type_bits,
 				memory_properties,
 			).ok_or(AllocErr::NoValidMemoryType)? as usize;
+			eprintln!("Memory type index of a buffer: {}", memory_type_index);
 
-			let buffer_opt = match self.memories[memory_type_index].blocks.last_mut() {
+			let memory = &mut self.memories[memory_type_index];
+
+			let top_memory_block_index = memory.blocks
+				.iter()
+				.rposition(|block| block.stack_offset != 0);
+
+			let (buffer_opt, memory_block_index) = match top_memory_block_index {
 				Some(block) => {
 					// bind memory. be careful about alignment and offset.
 					let new_offset = if block.stack_offset % memory_requirements.alignment != 0 {
@@ -165,11 +174,11 @@ impl<'vk_core> VkAlloc<'vk_core> {
 					};
 
 					let range_end = new_offset + memory_requirements.size;
-					if range_end < block.size {
-						block.stack_offset = new_offset;
-						self.vk_core.device
-							.bind_buffer_memory(buffer, block.raw_handle, block.stack_offset)
+					if range_end <= block.size {
+						device
+							.bind_buffer_memory(buffer, block.raw_handle, new_offset)
 							.map_err(|err| AllocErr::VkErr(err))?;
+						block.stack_offset = range_end;
 
 						Some(
 							Buffer {
@@ -188,10 +197,9 @@ impl<'vk_core> VkAlloc<'vk_core> {
 			let buffer = match buffer_opt {
 				Some(buffer) => buffer,
 				None => {
-					let allocation_size = self.memories[memory_type_index].block_size
-						.max(memory_requirements.size);
+					let allocation_size = memory.default_block_size.max(memory_requirements.size);
 
-					let new_block = self.vk_core.device
+					let new_block = device
 						.allocate_memory(
 							&vk::MemoryAllocateInfo {
 								s_type: StructureType::MEMORY_ALLOCATE_INFO,
@@ -203,15 +211,15 @@ impl<'vk_core> VkAlloc<'vk_core> {
 						)
 						.map_err(|err| AllocErr::VkErr(err))?;
 
-					self.memories[memory_type_index].blocks.push(
+					memory.blocks.push(
 						MemoryBlock {
 							raw_handle: new_block,
 							size: allocation_size,
-							stack_offset: 0,
+							stack_offset: memory_requirements.size,
 						}
 					);
 
-					self.vk_core.device
+					device
 						.bind_buffer_memory(buffer, new_block, 0)
 						.map_err(|err| AllocErr::VkErr(err))?;
 
@@ -223,9 +231,9 @@ impl<'vk_core> VkAlloc<'vk_core> {
 				}
 			};
 
-			self.memories[memory_type_index].buffers.push(buffer);
-			let buffer_index = self.memories[memory_type_index].buffers.len() - 1;
-			self.memories[memory_type_index].resources.push(Resource::Buffer(buffer_index));
+			let buffer_index = memory.buffers.len();
+			memory.resources.push(Resource::Buffer(buffer_index));
+			memory.buffers.push(buffer);
 
 			Ok(BufferHandle { memory_type_index, buffer_index })
 		}
@@ -245,9 +253,174 @@ impl<'vk_core> VkAlloc<'vk_core> {
 		array_layers: u32,
 		view_type: vk::ImageViewType,
 		components: vk::ComponentMapping,
+		memory_properties: vk::MemoryPropertyFlags,
 	) -> Result<ImageHandle, AllocErr> {
 		unsafe {
-			unimplemented!()
+			let device = &self.vk_core.device;
+			let physical_device = &self.vk_core.physical_device;
+			let image = device
+				.create_image(
+					&vk::ImageCreateInfo {
+						s_type: StructureType::IMAGE_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::ImageCreateFlags::empty(),
+						extent,
+						format,
+						usage,
+						sharing_mode,
+						initial_layout,
+						samples: sample_count,
+						tiling: vk::ImageTiling::OPTIMAL,
+						image_type,
+						mip_levels,
+						array_layers,
+						queue_family_index_count: physical_device.queue_family_index_count(),
+						p_queue_family_indices: physical_device.queue_family_index_ptr(),
+					},
+					None,
+				)
+				.map_err(|err| AllocErr::VkErr(err))?;
+
+			let memory_requirements = self.vk_core.device.get_image_memory_requirements(image);
+			eprintln!("Memory requirements of an image: {:?}", memory_requirements);
+
+			let memory_type_index = find_memory_type_index(
+				self.vk_core,
+				memory_requirements.memory_type_bits,
+				memory_properties,
+			).ok_or(AllocErr::NoValidMemoryType)? as usize;
+			eprintln!("Memory type index of an image: {}", memory_type_index);
+
+			let memory = &mut self.memories[memory_type_index];
+
+			let image_opt = match memory.blocks.last_mut() {
+				Some(block) => {
+					let new_offset = if block.stack_offset % memory_requirements.alignment != 0 {
+						(block.stack_offset / memory_requirements.alignment + 1)
+							* memory_requirements.alignment
+					} else {
+						block.stack_offset
+					};
+
+					let range_end = new_offset + memory_requirements.size;
+					if range_end <= block.size {
+						device
+							.bind_image_memory(image, block.raw_handle, new_offset)
+							.map_err(|err| AllocErr::VkErr(err))?;
+						block.stack_offset = range_end;
+
+						let view = device
+							.create_image_view(
+								&vk::ImageViewCreateInfo {
+									s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+									p_next: ptr::null(),
+									flags: vk::ImageViewCreateFlags::empty(),
+									image,
+									format,
+									components,
+									view_type,
+									subresource_range: vk::ImageSubresourceRange {
+										aspect_mask,
+										base_mip_level: 0,
+										level_count: mip_levels,
+										base_array_layer: 0,
+										layer_count: array_layers,
+									},
+								},
+								None,
+							)
+							.map_err(|err| AllocErr::VkErr(err))?;
+
+						Some(
+							Image {
+								raw_handle: image,
+								extent,
+								format,
+								layout: vec![initial_layout; mip_levels as usize],
+								aspect_mask,
+								mip_levels,
+								array_layers,
+								view,
+								range: new_offset..range_end,
+							}
+						)
+					} else {
+						None
+					}
+				}
+				None => None
+			};
+
+			let image = match image_opt {
+				Some(image) => image,
+				None => {
+					let allocation_size = memory.default_block_size.max(memory_requirements.size);
+
+					let new_block = device
+						.allocate_memory(
+							&vk::MemoryAllocateInfo {
+								s_type: StructureType::MEMORY_ALLOCATE_INFO,
+								p_next: ptr::null(),
+								allocation_size,
+								memory_type_index: memory_type_index as _,
+							},
+							None,
+						)
+						.map_err(|err| AllocErr::VkErr(err))?;
+
+					memory.blocks.push(
+						MemoryBlock {
+							raw_handle: new_block,
+							size: allocation_size,
+							stack_offset: memory_requirements.size,
+						}
+					);
+
+					device
+						.bind_image_memory(image, new_block, 0)
+						.map_err(|err| AllocErr::VkErr(err))?;
+
+					let view = device
+						.create_image_view(
+							&vk::ImageViewCreateInfo {
+								s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+								p_next: ptr::null(),
+								flags: vk::ImageViewCreateFlags::empty(),
+								image,
+								format,
+								components,
+								view_type,
+								subresource_range: vk::ImageSubresourceRange {
+									aspect_mask,
+									base_mip_level: 0,
+									level_count: mip_levels,
+									base_array_layer: 0,
+									layer_count: array_layers,
+								},
+							},
+							None,
+						)
+						.map_err(|err| AllocErr::VkErr(err))?;
+
+					Image {
+						raw_handle: image,
+						extent,
+						format,
+						layout: vec![initial_layout; mip_levels as usize],
+						mip_levels,
+						array_layers,
+						aspect_mask,
+						view,
+						range: 0..memory_requirements.size,
+					}
+				}
+			};
+
+			let image_index = memory.images.len();
+			memory.resources.push(Resource::Image(image_index));
+			memory.images.push(image);
+
+			Ok(ImageHandle { memory_type_index, image_index })
 		}
 	}
 
@@ -255,8 +428,28 @@ impl<'vk_core> VkAlloc<'vk_core> {
 		unimplemented!()
 	}
 
-	pub fn pop(&mut self) -> Resource {
-		unimplemented!()
+	pub fn pop_buffer(&mut self, handle: BufferHandle) -> Result<(), BufferHandle> {
+		let memory = &mut self.memories[handle.memory_type_index];
+		match memory.resources.last() {
+			Some(Resource::Buffer(index)) => {
+				if *index == handle.buffer_index {
+					memory.resources.pop().unwrap();
+					match memory.resources.last() {
+						Some(Resource::Buffer(index)) => {
+							let range = &memory.buffers[*index].range;
+						}
+						Some(Resource::Image(index)) => {
+							let range = &memory.images[*index].range;
+						}
+						None => (),
+					}
+					Ok(())
+				} else {
+					Err(handle)
+				}
+			}
+			_ => Err(handle),
+		}
 	}
 }
 
