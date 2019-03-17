@@ -1,11 +1,10 @@
-pub mod mem;
-mod buf_image_mem;
-mod cmd_buf;
+mod mem;
 mod shaders;
+mod cmd_buf;
 
-pub use crate::vulkan::shaders::*;
-pub use crate::vulkan::buf_image_mem::*;
-pub use crate::vulkan::cmd_buf::*;
+pub use self::shaders::*;
+pub use self::mem::*;
+pub use self::cmd_buf::*;
 
 use crate::linear_algebra::*;
 

@@ -1,0 +1,29 @@
+tag: character_icon
+origin: -1 -1
+top: 1
+bottom: 6
+left: 1
+right: 6
+texture: character
+u: 0 1
+v: 0 1
+
+tag: character_bar_base
+origin: -1 -1
+top: 1
+bottom: 6
+left: 6
+right: 16
+texture: character
+u: 0 1
+v: 0 1
+
+tag: character_hp_bar
+origin: -1 -1
+top: 2
+bottom: 3
+left: 7
+right: 15
+texture: character
+u: 0 1
+v: 0 1

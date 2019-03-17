@@ -32,13 +32,6 @@ pub struct Extent2D<T> {
 	pub left: T,
 }
 
-pub struct Rect2D<'vertex, 'texture> {
-	vertex_offset: u32,
-	vertex_buffer: &'vertex Buffer,
-	texture: &'texture DescriptorSets,
-	color_and_origin: PushConstant,
-}
-
 impl Default for Vertex {
 	fn default() -> Self {
 		Self {
@@ -111,48 +104,10 @@ impl Extent2D<f32> {
 
 	pub fn contain(&self, point: &XY) -> bool {
 		self.top <= point.y && point.y <= self.bottom
-		&& self.left <= point.x && point.x <= self.right
+			&& self.left <= point.x && point.x <= self.right
 	}
 }
 
-pub const TOP_LEFT: XY = XY::new(-1.0, -1.0);
-pub const TOP_CENTER: XY = XY::new(0.0, -1.0);
-pub const TOP_RIGHT: XY = XY::new(1.0, -1.0);
-pub const LEFT_CENTER: XY = XY::new(-1.0, 0.0);
-pub const CENTER: XY = XY::new(0.0, 0.0);
-pub const RIGHT_CENTER: XY = XY::new(-1.0, 0.0);
-pub const BOTTOM_LEFT: XY = XY::new(-1.0, 1.0);
-pub const BOTTOM_CENTER: XY = XY::new(0.0, 1.0);
-pub const BOTTOM_RIGHT: XY = XY::new(1.0, 1.0);
-
-
-impl<'vertex, 'texture> Rect2D<'vertex, 'texture> {
-	pub fn new(
-		vertex_buffer: &'vertex Buffer,
-		texture: &'texture DescriptorSets,
-		color_and_origin: PushConstant,
-	) -> Self {
-		let range = vertex_buffer.range();
-		let vertex_offset = (range.start / mem::size_of::<[Vertex; 4]>() as u64) as _;
-		debug_assert_eq!(0, range.start % mem::size_of::<[Vertex; 4]>() as u64);
-
-		Self {
-			vertex_offset,
-			vertex_buffer,
-			texture,
-			color_and_origin,
-		}
-	}
-
-	#[inline]
-	pub fn vertex_offset(&self) -> u32 { self.vertex_offset }
-	#[inline]
-	pub fn vertex_buffer(&self) -> &Buffer { &self.vertex_buffer }
-	#[inline]
-	pub fn texture(&self) -> &DescriptorSets { &self.texture }
-	#[inline]
-	pub fn color_and_origin(&self) -> &PushConstant { &self.color_and_origin }
-}
 
 /// The ownership of this struct never be obtained outside of this module.
 /// Only references can be obtained. Thus, lifetime doesn't need.
@@ -172,98 +127,98 @@ impl ops::Index<usize> for DescriptorSets {
 }
 
 impl<'vk_core> DescriptorPool<'vk_core> {
-	pub fn new(
-		vk_graphic: &VkGraphic<'vk_core>,
-		textures: &[(&Image, &VkSampler)],
-	) -> Result<Self, vk::Result> {
-		unsafe {
-			let total_sets_num = textures.len() * vk_graphic.images_num();
-
-			let pool_sizes = [vk::DescriptorPoolSize {
-				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-				descriptor_count: vk_graphic.images_num() as u32,
-			}];
-
-			let raw_handle = vk_graphic.vk_core.device
-				.create_descriptor_pool(
-					&vk::DescriptorPoolCreateInfo {
-						s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-						p_next: ptr::null(),
-						flags: vk::DescriptorPoolCreateFlags::empty(),
-						max_sets: total_sets_num as u32,
-						pool_size_count: pool_sizes.len() as u32,
-						p_pool_sizes: pool_sizes.as_ptr(),
-					},
-					None,
-				)?;
-
-			// NOTE: Allocate many times may make performance worse.
-			// Allocate once and operate Vec may be better.
-			let mut sets_vec = Vec::with_capacity(textures.len());
-			let set_layouts = vec![
-				vk_graphic.shaders.gui.descriptor_set_layout;
-				vk_graphic.images_num()
-			];
-			for _i in 0..textures.len() {
-				let sets = vk_graphic.vk_core.device
-					.allocate_descriptor_sets(
-						&vk::DescriptorSetAllocateInfo {
-							s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-							p_next: ptr::null(),
-							descriptor_pool: raw_handle,
-							descriptor_set_count: set_layouts.len() as u32,
-							p_set_layouts: set_layouts.as_ptr(),
-						}
-					)?;
-
-				sets_vec.push(DescriptorSets { raw_handles: sets });
-			}
-
-			let mut write_sets = Vec::with_capacity(total_sets_num);
-			let image_write_infos = textures
-				.iter()
-				.fold(
-					Vec::with_capacity(total_sets_num),
-					|mut infos, (image, sampler)| {
-						infos.push(
-							vk::DescriptorImageInfo {
-								image_view: image.view(),
-								image_layout: image.layout(0),
-								sampler: sampler.raw_handle,
-							}
-						);
-						infos
-					}
-				);
-			for (image_write, sets) in image_write_infos.iter().zip(sets_vec.iter()) {
-				for &set in sets.raw_handles.iter() {
-					write_sets.push(
-						vk::WriteDescriptorSet {
-							s_type: StructureType::WRITE_DESCRIPTOR_SET,
-							p_next: ptr::null(),
-							dst_set: set,
-							dst_binding: 0,
-							dst_array_element: 0,
-							descriptor_count: 1,
-							descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-							p_image_info: image_write as *const _,
-							p_buffer_info: ptr::null(),
-							p_texel_buffer_view: ptr::null(),
-						}
-					);
-				}
-			}
-			vk_graphic.vk_core.device.update_descriptor_sets(&write_sets[..], &[]);
-
-			Ok(
-				Self {
-					vk_core: vk_graphic.vk_core,
-					raw_handle,
-					sets_vec,
-				}
-			)
-		}
-	}
+//	pub fn new(
+//		vk_graphic: &VkGraphic<'vk_core>,
+//		textures: &[(&Image, &VkSampler)],
+//	) -> Result<Self, vk::Result> {
+//		unsafe {
+//			let total_sets_num = textures.len() * vk_graphic.images_num();
+//
+//			let pool_sizes = [vk::DescriptorPoolSize {
+//				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+//				descriptor_count: vk_graphic.images_num() as u32,
+//			}];
+//
+//			let raw_handle = vk_graphic.vk_core.device
+//				.create_descriptor_pool(
+//					&vk::DescriptorPoolCreateInfo {
+//						s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
+//						p_next: ptr::null(),
+//						flags: vk::DescriptorPoolCreateFlags::empty(),
+//						max_sets: total_sets_num as u32,
+//						pool_size_count: pool_sizes.len() as u32,
+//						p_pool_sizes: pool_sizes.as_ptr(),
+//					},
+//					None,
+//				)?;
+//
+//			// NOTE: Allocate many times may make performance worse.
+//			// Allocate once and operate Vec may be better.
+//			let mut sets_vec = Vec::with_capacity(textures.len());
+//			let set_layouts = vec![
+//				vk_graphic.shaders.gui.descriptor_set_layout;
+//				vk_graphic.images_num()
+//			];
+//			for _i in 0..textures.len() {
+//				let sets = vk_graphic.vk_core.device
+//					.allocate_descriptor_sets(
+//						&vk::DescriptorSetAllocateInfo {
+//							s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+//							p_next: ptr::null(),
+//							descriptor_pool: raw_handle,
+//							descriptor_set_count: set_layouts.len() as u32,
+//							p_set_layouts: set_layouts.as_ptr(),
+//						}
+//					)?;
+//
+//				sets_vec.push(DescriptorSets { raw_handles: sets });
+//			}
+//
+//			let mut write_sets = Vec::with_capacity(total_sets_num);
+//			let image_write_infos = textures
+//				.iter()
+//				.fold(
+//					Vec::with_capacity(total_sets_num),
+//					|mut infos, (image, sampler)| {
+//						infos.push(
+//							vk::DescriptorImageInfo {
+//								image_view: image.view(),
+//								image_layout: image.layout(0),
+//								sampler: sampler.raw_handle,
+//							}
+//						);
+//						infos
+//					}
+//				);
+//			for (image_write, sets) in image_write_infos.iter().zip(sets_vec.iter()) {
+//				for &set in sets.raw_handles.iter() {
+//					write_sets.push(
+//						vk::WriteDescriptorSet {
+//							s_type: StructureType::WRITE_DESCRIPTOR_SET,
+//							p_next: ptr::null(),
+//							dst_set: set,
+//							dst_binding: 0,
+//							dst_array_element: 0,
+//							descriptor_count: 1,
+//							descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+//							p_image_info: image_write as *const _,
+//							p_buffer_info: ptr::null(),
+//							p_texel_buffer_view: ptr::null(),
+//						}
+//					);
+//				}
+//			}
+//			vk_graphic.vk_core.device.update_descriptor_sets(&write_sets[..], &[]);
+//
+//			Ok(
+//				Self {
+//					vk_core: vk_graphic.vk_core,
+//					raw_handle,
+//					sets_vec,
+//				}
+//			)
+//		}
+//	}
 }
 
 impl ops::Index<usize> for DescriptorPool<'_> {

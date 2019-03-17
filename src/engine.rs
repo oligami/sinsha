@@ -64,33 +64,21 @@ impl Engine {
 			1,
 		).unwrap();
 
-		let mut vk_alloc = mem::VkAlloc::new(vk_core);
-		let buffer_handle = vk_alloc
-			.push_buffer(
-				0x1000_0000,
-				vk::BufferUsageFlags::TRANSFER_DST,
-				vk::SharingMode::EXCLUSIVE,
-				vk::MemoryPropertyFlags::HOST_VISIBLE,
-			)
-			.unwrap();
+		let (mut memory, buffer_index) = MemoryBlock::with_buffer(
+			vk_core,
+			0x1000_0000,
+			vk::MemoryPropertyFlags::HOST_VISIBLE,
+			0x1000,
+			vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::UNIFORM_BUFFER,
+			vk::SharingMode::EXCLUSIVE,
+		).unwrap();
+		let data_index = memory.bind_data(&buffer_index, 0x15).unwrap();
 
-		let image_handle = vk_alloc
-			.push_image(
-				vk::ImageType::TYPE_2D,
-				vk::Extent3D { width: 128, height: 128, depth: 1 },
-				vk::Format::R8G8B8A8_UNORM,
-				vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-				vk::SharingMode::EXCLUSIVE,
-				vk::ImageLayout::UNDEFINED,
-				vk::SampleCountFlags::TYPE_1,
-				vk::ImageAspectFlags::COLOR,
-				1,
-				1,
-				vk::ImageViewType::TYPE_2D,
-				vk::ComponentMapping::default(),
-				vk::MemoryPropertyFlags::DEVICE_LOCAL,
-			)
-			.unwrap();
+		let mut access = memory.access_buffer(&buffer_index).unwrap();
+		access.write_data(&data_index, "something is strange.").unwrap();
+		drop(access);
+
+		memory.clear();
 
 		let sampler = VkSampler::new(
 			vk_core,
