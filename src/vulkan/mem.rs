@@ -148,11 +148,17 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 			let memory_requirements = device.get_buffer_memory_requirements(buffer);
 			eprintln!("Memory requirements of a buffer: {:?}", memory_requirements);
 
-			let memory_type_index = find_memory_type_index(
-				vk_core,
-				memory_requirements.memory_type_bits,
-				memory_properties,
-			).ok_or(AllocErr::NoValidMemoryTypeIndex)?;
+			let memory_type_index =
+				find_memory_type_index(
+					vk_core,
+					memory_requirements.memory_type_bits,
+					memory_properties,
+				)
+				.ok_or(AllocErr::NoValidMemoryTypeIndex)
+				.map_err(|err| {
+					device.destroy_buffer(buffer, None);
+					err
+				})?;
 			eprintln!("Memory type index of a buffer: {}", memory_type_index);
 
 			let mut memory_block = Self::new(
@@ -163,7 +169,10 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 
 			device
 				.bind_buffer_memory(buffer, memory_block.raw_handle, 0)
-				.map_err(|err| AllocErr::VkErr(err))?;
+				.map_err(|err| {
+					device.destroy_buffer(buffer, None);
+					AllocErr::VkErr(err)
+				})?;
 
 			let buffer = Buffer {
 				raw_handle: buffer,
@@ -176,6 +185,114 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 			memory_block.resources.push(Resource::Buffer(0));
 
 			Ok((memory_block, BufferIndex(0)))
+		}
+	}
+
+	pub fn with_image(
+		vk_core: &'vk_core VkCore,
+		memory_size: vk::DeviceSize,
+		memory_properties: vk::MemoryPropertyFlags,
+		image_type: vk::ImageType,
+		extent: vk::Extent3D,
+		format: vk::Format,
+		usage: vk::ImageUsageFlags,
+		sharing_mode: vk::SharingMode,
+		initial_layout: vk::ImageLayout,
+		sample_count: vk::SampleCountFlags,
+		aspect_mask: vk::ImageAspectFlags,
+		mip_levels: u32,
+		array_layers: u32,
+		view_type: vk::ImageViewType,
+		components: vk::ComponentMapping,
+	) -> Result<(Self, ImageIndex), AllocErr> {
+		unsafe {
+			let device = &vk_core.device;
+			let physical_device = &vk_core.physical_device;
+
+			// create image
+			let image = device
+				.create_image(
+					&vk::ImageCreateInfo {
+						s_type: StructureType::IMAGE_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::ImageCreateFlags::empty(),
+						extent,
+						format,
+						usage,
+						sharing_mode,
+						initial_layout,
+						samples: sample_count,
+						tiling: vk::ImageTiling::OPTIMAL,
+						image_type,
+						mip_levels,
+						array_layers,
+						queue_family_index_count: physical_device.queue_family_index_count(),
+						p_queue_family_indices: physical_device.queue_family_index_ptr(),
+					},
+					None,
+				)
+				.map_err(|err| AllocErr::VkErr(err))?;
+
+			let memory_requirements = device.get_image_memory_requirements(image);
+			eprintln!("Memory requirements of an image: {:?}", memory_requirements);
+
+			let memory_type_index = find_memory_type_index(
+				vk_core,
+				memory_requirements.memory_type_bits,
+				memory_properties,
+			).ok_or(AllocErr::NoValidMemoryTypeIndex)?;
+			eprintln!("Memory type index of an image: {}", memory_type_index);
+
+			let mut memory_block = Self::new(
+				vk_core,
+				memory_type_index,
+				memory_size,
+			)?;
+
+			device
+				.bind_image_memory(image, memory_block.raw_handle, 0)
+				.map_err(|err| AllocErr::VkErr(err))?;
+
+			let view = device
+				.create_image_view(
+					&vk::ImageViewCreateInfo {
+						s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::ImageViewCreateFlags::empty(),
+						image,
+						format,
+						view_type,
+						components,
+						subresource_range: vk::ImageSubresourceRange {
+							aspect_mask,
+							base_mip_level: 0,
+							level_count: mip_levels,
+							base_array_layer: 0,
+							layer_count: array_layers,
+						}
+					},
+					None,
+				)
+				.map_err(|err| AllocErr::VkErr(err))?;
+
+			let image = Image {
+				raw_handle: image,
+				extent,
+				format,
+				layout: vec![initial_layout, mip_levels as usize],
+				aspect_mask,
+				mip_levels,
+				array_layers,
+				view,
+				range: 0..memory_requirements.size,
+			};
+
+			let image_index = ImageIndex(0);
+			memory_block.resources.push(Resource::Image(0));
+			memory_block.images.push(image);
+			memory_block.stack_offset = memory_requirements.size;
+
+			Ok((memory_block, image_index))
 		}
 	}
 
@@ -232,7 +349,7 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 				.map_err(|err| AllocErr::VkErr(err))?;
 
 			// examine memory requirements
-			let memory_requirements = self.vk_core.device.get_image_memory_requirements(image);
+			let memory_requirements = device.get_image_memory_requirements(image);
 			eprintln!("Memory requirements of an image: {:?}", memory_requirements);
 			if 1 << self.type_index & memory_requirements.memory_type_bits != 0 {
 				return Err(AllocErr::InvalidMemoryTypeIndex);
@@ -395,6 +512,10 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 	#[inline]
 	pub(in crate::vulkan)
 	fn image_ref(&self, index: &ImageIndex) -> &Image { &self.images[index.0] }
+
+	#[inline]
+	pub(in crate::vulkan)
+	fn image_ref_mut(&mut self, index: &ImageIndex) -> &mut Image { &mut self.images[index.0] }
 }
 
 impl Drop for MemoryBlock<'_> {

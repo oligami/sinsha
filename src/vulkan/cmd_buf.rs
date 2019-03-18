@@ -164,20 +164,110 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 
 	pub fn data_block_to_image(
 		&mut self,
-		src_data_block: (),
-		(dst_image, memory): (&ImageIndex, &MemoryBlock), // mip level should be supplied
+		(src_data_block, src_memory): (&DataIndex, &MemoryBlock),
+		(dst_image, mip_level, dst_memory): (&ImageIndex, u32, &MemoryBlock), // mip level should be supplied
 	) -> &mut Self {
-		let dst_image = memory.image_ref(dst_image);
-		unimplemented!();
+		unsafe {
+			let src_buffer = src_memory.buffer_of_data(src_data_block);
+			let dst_image = dst_memory.image_ref(dst_image);
+			self.command_buffers.vk_core.device
+				.cmd_copy_buffer_to_image(
+					self.command_buffers[self.index],
+					src_buffer.raw_handle,
+					dst_image.raw_handle,
+					dst_image.layout[mip_level as usize],
+					&[
+						vk::BufferImageCopy {
+							buffer_offset: src_memory.data_ref(src_data_block).range.start,
+							buffer_image_height: 0,
+							buffer_row_length: 0,
+							image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+							image_extent: dst_image.extent,
+							image_subresource: vk::ImageSubresourceLayers {
+								aspect_mask: dst_image.aspect_mask,
+								mip_level,
+								base_array_layer: 0,
+								layer_count: dst_image.array_layers,
+							},
+						},
+					],
+				);
+		}
+
 		self
 	}
 
-	pub fn image_barrier(
+	pub fn image_barrier<Rmip, Rlayer>(
 		&mut self,
 		stage: (vk::PipelineStageFlags, vk::PipelineStageFlags),
-		image_barriers: (), // image layout should be updated
-	) -> &mut Self {
-		unimplemented!();
+		access_mask: (vk::AccessFlags, vk::AccessFlags),
+	 	(image, memory): (&ImageIndex, &mut MemoryBlock),
+		new_layout: vk::ImageLayout,
+		mip_level_range: Rmip,
+		array_layer_range: Rlayer
+	) -> &mut Self
+		where Rmip: ops::RangeBounds<u32>,
+			  Rlayer: ops::RangeBounds<u32>,
+	{
+		fn bound_to_range<B>(bound: B, (min, max): (u32, u32)) -> ops::Range<u32>
+			where B: ops::RangeBounds<u32>
+		{
+			let start = match ops::RangeBounds::start_bound(&bound) {
+				ops::Bound::Included(&n) => n,
+				ops::Bound::Excluded(&n) => n + 1,
+				ops::Bound::Unbounded => min,
+			};
+
+			let end = match ops::RangeBounds::end_bound(&bound) {
+				ops::Bound::Included(&n) => n + 1,
+				ops::Bound::Excluded(&n) => n,
+				ops::Bound::Unbounded => max,
+			};
+
+			start..end
+		}
+
+		let image = memory.image_ref_mut(image);
+		let mip_level_range = bound_to_range(mip_level_range, (0, image.mip_levels));
+		let array_layer_range = bound_to_range(array_layer_range, (0, image.array_layers));
+		let range_to_size = |range: &ops::Range<u32>| range.end - range.start;
+
+		unsafe {
+			self.command_buffers.vk_core.device
+				.cmd_pipeline_barrier(
+					self.command_buffers[self.index],
+					stage.0,
+					stage.1,
+					vk::DependencyFlags::BY_REGION,
+					&[],
+					&[],
+					&[
+						vk::ImageMemoryBarrier {
+							s_type: StructureType::IMAGE_MEMORY_BARRIER,
+							p_next: ptr::null(),
+							src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+							dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+							src_access_mask: access_mask.0,
+							dst_access_mask: access_mask.1,
+							image: image.raw_handle,
+							old_layout: image.layout[mip_level_range.start as usize],
+							new_layout,
+							subresource_range: vk::ImageSubresourceRange {
+								aspect_mask: image.aspect_mask,
+								base_mip_level: mip_level_range.start,
+								level_count: range_to_size(&mip_level_range),
+								base_array_layer: array_layer_range.start,
+								layer_count: range_to_size(&array_layer_range),
+							}
+						},
+					],
+				);
+
+			image.layout[mip_level_range.start as usize..mip_level_range.end as usize]
+				.iter_mut()
+				.for_each(|layout| *layout = new_layout);
+		}
+
 		self
 	}
 
