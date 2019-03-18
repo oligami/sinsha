@@ -233,6 +233,8 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 				)
 				.map_err(|err| AllocErr::VkErr(err))?;
 
+			let destroy_image = || device.destroy_image(image, None);
+
 			let memory_requirements = device.get_image_memory_requirements(image);
 			eprintln!("Memory requirements of an image: {:?}", memory_requirements);
 
@@ -240,18 +242,30 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 				vk_core,
 				memory_requirements.memory_type_bits,
 				memory_properties,
-			).ok_or(AllocErr::NoValidMemoryTypeIndex)?;
+			)
+				.ok_or(AllocErr::NoValidMemoryTypeIndex)
+				.map_err(|err| {
+					destroy_image();
+					err
+				})?;
 			eprintln!("Memory type index of an image: {}", memory_type_index);
 
 			let mut memory_block = Self::new(
 				vk_core,
 				memory_type_index,
 				memory_size,
-			)?;
+			)
+				.map_err(|err| {
+					destroy_image();
+					err
+				})?;
 
 			device
 				.bind_image_memory(image, memory_block.raw_handle, 0)
-				.map_err(|err| AllocErr::VkErr(err))?;
+				.map_err(|err| {
+					destroy_image();
+					AllocErr::VkErr(err)
+				})?;
 
 			let view = device
 				.create_image_view(
@@ -273,13 +287,16 @@ impl<'vk_core> MemoryBlock<'vk_core> {
 					},
 					None,
 				)
-				.map_err(|err| AllocErr::VkErr(err))?;
+				.map_err(|err| {
+					destroy_image();
+					AllocErr::VkErr(err)
+				})?;
 
 			let image = Image {
 				raw_handle: image,
 				extent,
 				format,
-				layout: vec![initial_layout, mip_levels as usize],
+				layout: vec![initial_layout; mip_levels as usize],
 				aspect_mask,
 				mip_levels,
 				array_layers,

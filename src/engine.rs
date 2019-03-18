@@ -24,11 +24,11 @@ impl Engine {
 		eprintln!("types: {}, heaps: {}", mem_prop.memory_type_count, mem_prop.memory_heap_count);
 		mem_prop.memory_types
 			.iter()
-			.zip([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].iter())
+			.zip(0..mem_prop.memory_type_count)
 			.for_each(|(ty, i)| eprintln!("type{}: {:?}", i, ty));
 		mem_prop.memory_heaps
 			.iter()
-			.zip([0, 1].iter())
+			.zip(0..mem_prop.memory_heap_count)
 			.for_each(|(heap, i)| eprintln!("heap{}: {:?}", i, heap));
 
 		Engine::start_menu(&vk_core, &mut vk_graphic, &window, &mut events_loop);
@@ -78,7 +78,24 @@ impl Engine {
 		access.write_data(&data_index, "something is strange.").unwrap();
 		drop(access);
 
-		memory.clear();
+		let (mut memory, image_index) = MemoryBlock::with_image(
+			vk_core,
+			0x1000_0000,
+			vk::MemoryPropertyFlags::DEVICE_LOCAL,
+			vk::ImageType::TYPE_2D,
+			vk::Extent3D { width: 128, height: 128, depth: 1 },
+			vk::Format::R8G8B8A8_UNORM,
+			vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+			vk::SharingMode::EXCLUSIVE,
+			vk::ImageLayout::UNDEFINED,
+			vk::SampleCountFlags::TYPE_1,
+			vk::ImageAspectFlags::COLOR,
+			1,
+			1,
+			vk::ImageViewType::TYPE_2D,
+			vk::ComponentMapping::default(),
+		).unwrap();
+
 
 		let sampler = VkSampler::new(
 			vk_core,
