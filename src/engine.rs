@@ -31,7 +31,7 @@ impl Engine {
 			.zip(0..mem_prop.memory_heap_count)
 			.for_each(|(heap, i)| eprintln!("heap{}: {:?}", i, heap));
 
-		Engine::start_menu(&vk_core, &mut vk_graphic, &window, &mut events_loop);
+		start_menu::run(&vk_core, &mut vk_graphic, &window, &mut events_loop);
 	}
 }
 
@@ -48,84 +48,5 @@ impl Engine {
 			.unwrap();
 
 		(window, events_loop)
-	}
-
-	fn start_menu(
-		vk_core: &VkCore,
-		vk_graphic: &mut VkGraphic,
-		window: &Window,
-		events_loop: &mut EventsLoop,
-	) {
-		let mut interaction_devices = InteractionDevices::new(window);
-		let mut command_buffers = CommandBuffers::new(
-			vk_core,
-			vk::CommandPoolCreateFlags::TRANSIENT,
-			vk::CommandBufferLevel::PRIMARY,
-			1,
-		).unwrap();
-
-		let (mut memory, buffer_index) = MemoryBlock::with_buffer(
-			vk_core,
-			0x1000_0000,
-			vk::MemoryPropertyFlags::HOST_VISIBLE,
-			0x1000,
-			vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::UNIFORM_BUFFER,
-			vk::SharingMode::EXCLUSIVE,
-		).unwrap();
-		let data_index = memory.bind_data(&buffer_index, 0x15).unwrap();
-
-		let mut access = memory.access_buffer(&buffer_index).unwrap();
-		access.write_data(&data_index, "something is strange.").unwrap();
-		drop(access);
-
-		let (mut memory, image_index) = MemoryBlock::with_image(
-			vk_core,
-			0x1000_0000,
-			vk::MemoryPropertyFlags::DEVICE_LOCAL,
-			vk::ImageType::TYPE_2D,
-			vk::Extent3D { width: 128, height: 128, depth: 1 },
-			vk::Format::R8G8B8A8_UNORM,
-			vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-			vk::SharingMode::EXCLUSIVE,
-			vk::ImageLayout::UNDEFINED,
-			vk::SampleCountFlags::TYPE_1,
-			vk::ImageAspectFlags::COLOR,
-			1,
-			1,
-			vk::ImageViewType::TYPE_2D,
-			vk::ComponentMapping::default(),
-		).unwrap();
-
-
-		let sampler = VkSampler::new(
-			vk_core,
-			(vk::Filter::LINEAR, vk::Filter::NEAREST),
-			vk::SamplerAddressMode::REPEAT,
-			vk::SamplerAddressMode::REPEAT,
-			vk::SamplerAddressMode::REPEAT,
-			vk::BorderColor::FLOAT_OPAQUE_BLACK,
-			vk::SamplerMipmapMode::NEAREST,
-			0.0,
-			0.0..10.0,
-			None,
-			None,
-			vk::FALSE,
-		).unwrap();
-
-		loop {
-			let mut close_requested = false;
-			events_loop.poll_events(|event| {
-				interaction_devices.event_update(&event);
-				match event {
-					Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-						close_requested = true;
-					}
-					_ => (),
-				}
-			});
-			if close_requested { break; }
-
-			interaction_devices.clear();
-		}
 	}
 }

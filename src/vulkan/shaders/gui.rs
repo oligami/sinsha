@@ -16,7 +16,6 @@ use std::collections::HashMap;
 #[repr(C)]
 #[derive(Copy, Clone, Debug)]
 pub struct Vertex {
-	color: RGBA,
 	position: XY,
 	texture: XY,
 }
@@ -35,7 +34,6 @@ pub struct Extent2D<T> {
 impl Default for Vertex {
 	fn default() -> Self {
 		Self {
-			color: RGBA::default(),
 			position: XY::zero(),
 			texture: XY::zero(),
 		}
@@ -43,18 +41,13 @@ impl Default for Vertex {
 }
 
 impl Vertex {
-	pub const fn new(color: RGBA, position: XY, texture: XY) -> Self {
-		Self { color, position, texture }
+	pub const fn new(position: XY, texture: XY) -> Self {
+		Self { position, texture }
 	}
 }
 
-impl AsRef<[u8]> for Vertex {
-	fn as_ref(&self) -> &[u8] {
-		unsafe {
-			let ptr = self as *const _ as *const u8;
-			slice::from_raw_parts(ptr, mem::size_of::<Self>())
-		}
-	}
+impl PushConstant {
+	pub fn new(rgba: RGBA, xy: XY) -> Self { PushConstant(rgba, xy) }
 }
 
 impl AsRef<[u8]> for PushConstant {
@@ -127,98 +120,92 @@ impl ops::Index<usize> for DescriptorSets {
 }
 
 impl<'vk_core> DescriptorPool<'vk_core> {
-//	pub fn new(
-//		vk_graphic: &VkGraphic<'vk_core>,
-//		textures: &[(&Image, &VkSampler)],
-//	) -> Result<Self, vk::Result> {
-//		unsafe {
-//			let total_sets_num = textures.len() * vk_graphic.images_num();
-//
-//			let pool_sizes = [vk::DescriptorPoolSize {
-//				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-//				descriptor_count: vk_graphic.images_num() as u32,
-//			}];
-//
-//			let raw_handle = vk_graphic.vk_core.device
-//				.create_descriptor_pool(
-//					&vk::DescriptorPoolCreateInfo {
-//						s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
-//						p_next: ptr::null(),
-//						flags: vk::DescriptorPoolCreateFlags::empty(),
-//						max_sets: total_sets_num as u32,
-//						pool_size_count: pool_sizes.len() as u32,
-//						p_pool_sizes: pool_sizes.as_ptr(),
-//					},
-//					None,
-//				)?;
-//
-//			// NOTE: Allocate many times may make performance worse.
-//			// Allocate once and operate Vec may be better.
-//			let mut sets_vec = Vec::with_capacity(textures.len());
-//			let set_layouts = vec![
-//				vk_graphic.shaders.gui.descriptor_set_layout;
-//				vk_graphic.images_num()
-//			];
-//			for _i in 0..textures.len() {
-//				let sets = vk_graphic.vk_core.device
-//					.allocate_descriptor_sets(
-//						&vk::DescriptorSetAllocateInfo {
-//							s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
-//							p_next: ptr::null(),
-//							descriptor_pool: raw_handle,
-//							descriptor_set_count: set_layouts.len() as u32,
-//							p_set_layouts: set_layouts.as_ptr(),
-//						}
-//					)?;
-//
-//				sets_vec.push(DescriptorSets { raw_handles: sets });
-//			}
-//
-//			let mut write_sets = Vec::with_capacity(total_sets_num);
-//			let image_write_infos = textures
-//				.iter()
-//				.fold(
-//					Vec::with_capacity(total_sets_num),
-//					|mut infos, (image, sampler)| {
-//						infos.push(
-//							vk::DescriptorImageInfo {
-//								image_view: image.view(),
-//								image_layout: image.layout(0),
-//								sampler: sampler.raw_handle,
-//							}
-//						);
-//						infos
-//					}
-//				);
-//			for (image_write, sets) in image_write_infos.iter().zip(sets_vec.iter()) {
-//				for &set in sets.raw_handles.iter() {
-//					write_sets.push(
-//						vk::WriteDescriptorSet {
-//							s_type: StructureType::WRITE_DESCRIPTOR_SET,
-//							p_next: ptr::null(),
-//							dst_set: set,
-//							dst_binding: 0,
-//							dst_array_element: 0,
-//							descriptor_count: 1,
-//							descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-//							p_image_info: image_write as *const _,
-//							p_buffer_info: ptr::null(),
-//							p_texel_buffer_view: ptr::null(),
-//						}
-//					);
-//				}
-//			}
-//			vk_graphic.vk_core.device.update_descriptor_sets(&write_sets[..], &[]);
-//
-//			Ok(
-//				Self {
-//					vk_core: vk_graphic.vk_core,
-//					raw_handle,
-//					sets_vec,
-//				}
-//			)
-//		}
-//	}
+	pub fn new(
+		vk_graphic: &VkGraphic<'vk_core>,
+		textures: &[(&VkImageView<'vk_core>, &VkSampler)],
+	) -> Result<Self, vk::Result> {
+		unsafe {
+			let total_sets_num = textures.len() * vk_graphic.images_num();
+
+			let pool_sizes = [vk::DescriptorPoolSize {
+				ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+				descriptor_count: vk_graphic.images_num() as u32,
+			}];
+
+			let raw_handle = vk_graphic.vk_core.device
+				.create_descriptor_pool(
+					&vk::DescriptorPoolCreateInfo {
+						s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::DescriptorPoolCreateFlags::empty(),
+						max_sets: total_sets_num as u32,
+						pool_size_count: pool_sizes.len() as u32,
+						p_pool_sizes: pool_sizes.as_ptr(),
+					},
+					None,
+				)?;
+
+			// NOTE: Allocate many times may make performance worse.
+			// Allocate once and operate Vec may be better.
+			let mut sets_vec = Vec::with_capacity(textures.len());
+			let set_layouts = vec![
+				vk_graphic.shaders.gui.descriptor_set_layout;
+				vk_graphic.images_num()
+			];
+			for _i in 0..textures.len() {
+				let sets = vk_graphic.vk_core.device
+					.allocate_descriptor_sets(
+						&vk::DescriptorSetAllocateInfo {
+							s_type: StructureType::DESCRIPTOR_SET_ALLOCATE_INFO,
+							p_next: ptr::null(),
+							descriptor_pool: raw_handle,
+							descriptor_set_count: set_layouts.len() as u32,
+							p_set_layouts: set_layouts.as_ptr(),
+						}
+					)?;
+
+				sets_vec.push(DescriptorSets { raw_handles: sets });
+			}
+
+			let mut write_sets = Vec::with_capacity(total_sets_num);
+			let image_write_infos = textures
+				.iter()
+				.fold(
+					Vec::with_capacity(total_sets_num),
+					|mut infos, (image_view, sampler)| {
+						infos.push(
+							vk::DescriptorImageInfo {
+								image_view: image_view.raw_handle,
+								image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+								sampler: sampler.raw_handle,
+							}
+						);
+						infos
+					}
+				);
+			for (image_write, sets) in image_write_infos.iter().zip(sets_vec.iter()) {
+				for &set in sets.raw_handles.iter() {
+					write_sets.push(
+						vk::WriteDescriptorSet {
+							s_type: StructureType::WRITE_DESCRIPTOR_SET,
+							p_next: ptr::null(),
+							dst_set: set,
+							dst_binding: 0,
+							dst_array_element: 0,
+							descriptor_count: 1,
+							descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+							p_image_info: image_write as *const _,
+							p_buffer_info: ptr::null(),
+							p_texel_buffer_view: ptr::null(),
+						}
+					);
+				}
+			}
+			vk_graphic.vk_core.device.update_descriptor_sets(&write_sets[..], &[]);
+
+			Ok(Self { vk_core: vk_graphic.vk_core, raw_handle, sets_vec })
+		}
+	}
 }
 
 impl ops::Index<usize> for DescriptorPool<'_> {
@@ -232,7 +219,7 @@ impl Drop for DescriptorPool<'_> {
 	}
 }
 
-pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {
+pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f32) -> Shader {
 	let descriptor_set_layout = {
 		let descriptor_set_bindings = [
 			vk::DescriptorSetLayoutBinding {
@@ -264,7 +251,7 @@ pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {
 			vk::PushConstantRange {
 				stage_flags: vk::ShaderStageFlags::VERTEX,
 				offset: 0,
-				size: (mem::size_of::<RGBA>() + mem::size_of::<XY>()) as u32,
+				size: mem::size_of::<PushConstant>() as u32,
 			},
 		];
 
@@ -289,6 +276,21 @@ pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {
 	let frag_shader_module = shaders::load_shader_module(device, "shaders/gui/frag.spv").unwrap();
 
 	let invoke_fn_name = CString::new("main").unwrap();
+
+	let vertex_specialization_constants = [
+		vk::SpecializationMapEntry {
+			constant_id: 0,
+			offset: 0,
+			size: mem::size_of::<f32>(),
+		}
+	];
+
+	let vertex_specialization_constants = vk::SpecializationInfo {
+		map_entry_count: vertex_specialization_constants.len() as _,
+		p_map_entries: vertex_specialization_constants.as_ptr(),
+		data_size: mem::size_of::<f32>(),
+		p_data: width_height_ratio as *const _ as _,
+	};
 
 	let shader_infos = [
 		vk::PipelineShaderStageCreateInfo {
@@ -318,19 +320,12 @@ pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {
 	};
 
 	let attribute_desc = [
-		// Represents `color: RGBA` in Vertex
+		// Represents `position: XY` and `texture: XY` in Vertex
 		vk::VertexInputAttributeDescription {
 			binding: 0,
 			location: 0,
 			format: vk::Format::R32G32B32A32_SFLOAT,
 			offset: 0,
-		},
-		// Represents `position: XY` and `texture: XY` in Vertex
-		vk::VertexInputAttributeDescription {
-			binding: 0,
-			location: 1,
-			format: vk::Format::R32G32B32A32_SFLOAT,
-			offset: mem::size_of::<RGBA>() as u32,
 		},
 	];
 
@@ -436,33 +431,31 @@ pub fn load(device: &Device, render_pass: vk::RenderPass) -> Shader {
 		p_dynamic_states: dynamic_states.as_ptr(),
 	};
 
-	let info = [
-		vk::GraphicsPipelineCreateInfo {
-			s_type: StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineCreateFlags::empty(),
-			stage_count: shader_infos.len() as u32,
-			p_stages: shader_infos.as_ptr(),
-			p_vertex_input_state: &input_state as *const _,
-			p_input_assembly_state: &input_assembly as *const _,
-			p_viewport_state: &viewport_state as *const _,
-			p_tessellation_state: ptr::null(),
-			p_rasterization_state: &rasterization_state as *const _,
-			p_multisample_state: &multisample as *const _,
-			p_depth_stencil_state: ptr::null(),
-			p_color_blend_state: &color_blend_state as *const _,
-			p_dynamic_state: &dynamic_states as *const _,
-			layout: pipeline_layout,
-			render_pass,
-			subpass: 0,
-			base_pipeline_handle: vk::Pipeline::null(),
-			base_pipeline_index: -1,
-		}
-	];
+	let info = vk::GraphicsPipelineCreateInfo {
+		s_type: StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
+		p_next: ptr::null(),
+		flags: vk::PipelineCreateFlags::empty(),
+		stage_count: shader_infos.len() as u32,
+		p_stages: shader_infos.as_ptr(),
+		p_vertex_input_state: &input_state as *const _,
+		p_input_assembly_state: &input_assembly as *const _,
+		p_viewport_state: &viewport_state as *const _,
+		p_tessellation_state: ptr::null(),
+		p_rasterization_state: &rasterization_state as *const _,
+		p_multisample_state: &multisample as *const _,
+		p_depth_stencil_state: ptr::null(),
+		p_color_blend_state: &color_blend_state as *const _,
+		p_dynamic_state: &dynamic_states as *const _,
+		layout: pipeline_layout,
+		render_pass,
+		subpass: 0,
+		base_pipeline_handle: vk::Pipeline::null(),
+		base_pipeline_index: -1,
+	};
 
 	let pipeline = unsafe {
 		device
-			.create_graphics_pipelines(vk::PipelineCache::null(), &info, None)
+			.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)
 			.expect("Failed to create pipeline.")[0]
 	};
 

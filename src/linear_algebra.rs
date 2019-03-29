@@ -140,3 +140,13 @@ impl Div for XY {
 		}
 	}
 }
+
+impl Div<f32> for XY {
+	type Output = Self;
+	fn div(self, rhs: f32) -> Self {
+		Self {
+			x: self.x / rhs,
+			y: self.y / rhs,
+		}
+	}
+}

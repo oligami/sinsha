@@ -39,9 +39,12 @@ pub struct Shaders {
 }
 
 impl Shaders {
-	pub fn load(device: &Device, render_pass: vk::RenderPass) -> Self {
+	pub fn load(
+		device: &Device,
+		render_pass: vk::RenderPass,
+		specialization_constants: (f32, )) -> Self {
 		Self {
-			gui: self::gui::load(device, render_pass),
+			gui: self::gui::load(device, render_pass, &specialization_constants.0),
 		}
 	}
 }

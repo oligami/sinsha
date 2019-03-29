@@ -87,6 +87,7 @@ pub struct VkFence<'vk_core> {
 
 /// vk::Semaphore is often used in type slice.
 /// This struct should be destroyed explicitly.
+#[derive(Copy, Clone)]
 pub struct VkSemaphore<'vk_core> {
 	raw_handle: vk::Semaphore,
 	_marker: PhantomData<&'vk_core VkCore>,
@@ -463,7 +464,12 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				.expect("Failed to create render pass.");
 
 			// create shaders
-			let shaders = Shaders::load(&vk_core.device, render_pass);
+			let width_height_ratio = {
+				let extent = &swapchain.data.extent;
+				extent.height as f32 / extent.width as f32
+			};
+			let specialization_constants = (width_height_ratio, );
+			let shaders = Shaders::load(&vk_core.device, render_pass, specialization_constants);
 
 			// create framebuffer
 			let mut framebuffers = Vec::with_capacity(swapchain.images.len());
@@ -494,6 +500,50 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				shaders,
 				framebuffers,
 			}
+		}
+	}
+
+	pub fn next_image(
+		&self,
+		semaphore: Option<&VkSemaphore>,
+		fence: Option<&VkFence>,
+	) -> Result<usize, vk::Result> {
+		unsafe {
+			let index = self.swapchain.loader
+				.acquire_next_image(
+					self.swapchain.raw_handle,
+					!0,
+					semaphore.map(|s| s.raw_handle).unwrap_or(vk::Semaphore::null()),
+					fence.map(|s| s.raw_handle).unwrap_or(vk::Fence::null()),
+				)
+				.map(|(index, _)| index as usize)?;
+
+			Ok(index)
+		}
+	}
+
+	pub fn present(
+		&self,
+		ref image_index: u32,
+		semaphores: &[VkSemaphore],
+	) -> Result<(), vk::Result> {
+		unsafe {
+			self.swapchain.loader
+				.queue_present(
+					self.vk_core.queue,
+					&vk::PresentInfoKHR {
+						s_type: StructureType::PRESENT_INFO_KHR,
+						p_next: ptr::null(),
+						wait_semaphore_count: semaphores.len() as _,
+						p_wait_semaphores: semaphores.as_ptr() as *const _,
+						swapchain_count: 1,
+						p_swapchains: &self.swapchain.raw_handle as *const _,
+						p_image_indices: image_index as *const _,
+						p_results: ptr::null_mut(),
+					},
+				)?;
+
+			Ok(())
 		}
 	}
 
@@ -633,10 +683,6 @@ impl<'vk_core> VkSemaphore<'vk_core> {
 			std::mem::forget(self);
 		}
 	}
-}
-
-impl Drop for VkSemaphore<'_> {
-	fn drop(&mut self) { panic!("VkSemaphore is not destroyed.") }
 }
 
 fn instance_extensions() -> Vec<*const i8> {
