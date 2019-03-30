@@ -21,7 +21,14 @@ pub struct Vertex {
 }
 
 #[repr(C)]
-pub struct PushConstant(RGBA, XY);
+pub struct PushConstants(RGBA, XY);
+
+pub struct Obj<'vk_core, 'buf, 'sets> {
+	pub(in crate::vulkan) vertex: &'buf VkBuffer<'vk_core>,
+	pub(in crate::vulkan) vertex_offset: u32,
+	pub(in crate::vulkan) sets: &'sets DescriptorSets,
+	pub(in crate::vulkan) push_constants: PushConstants,
+}
 
 #[derive(Copy, Clone, Debug)]
 pub struct Extent2D<T> {
@@ -46,11 +53,11 @@ impl Vertex {
 	}
 }
 
-impl PushConstant {
-	pub fn new(rgba: RGBA, xy: XY) -> Self { PushConstant(rgba, xy) }
+impl PushConstants {
+	pub fn new(rgba: RGBA, xy: XY) -> Self { PushConstants(rgba, xy) }
 }
 
-impl AsRef<[u8]> for PushConstant {
+impl AsRef<[u8]> for PushConstants {
 	fn as_ref(&self) -> &[u8] {
 		unsafe {
 			let ptr = self as *const _ as *const u8;
@@ -99,6 +106,20 @@ impl Extent2D<f32> {
 		self.top <= point.y && point.y <= self.bottom
 			&& self.left <= point.x && point.x <= self.right
 	}
+}
+
+impl<'vk_core, 'buf, 'sets> Obj<'vk_core, 'buf, 'sets> {
+	pub fn new(
+		vertex: &'buf VkBuffer<'vk_core>,
+		vertex_offset: u32,
+		sets: &'sets DescriptorSets,
+		push_constants: PushConstants,
+	) -> Self {
+		Self { vertex, vertex_offset, sets, push_constants }
+	}
+
+	#[inline] pub fn set_rgba(&mut self, rgba: RGBA) { self.push_constants.0 = rgba; }
+	#[inline] pub fn set_origin(&mut self, xy: XY) { self.push_constants.1 = xy; }
 }
 
 
@@ -219,7 +240,9 @@ impl Drop for DescriptorPool<'_> {
 	}
 }
 
-pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f32) -> Shader {
+pub fn load_layouts(
+	device: &Device
+) -> Result<(vk::PipelineLayout, vk::DescriptorSetLayout), vk::Result> {
 	let descriptor_set_layout = {
 		let descriptor_set_bindings = [
 			vk::DescriptorSetLayoutBinding {
@@ -239,11 +262,7 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 			p_bindings: descriptor_set_bindings.as_ptr(),
 		};
 
-		unsafe {
-			device
-				.create_descriptor_set_layout(&info, None)
-				.expect("Failed to create descriptor set layout.")
-		}
+		unsafe { device.create_descriptor_set_layout(&info, None)? }
 	};
 
 	let pipeline_layout = {
@@ -251,7 +270,7 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 			vk::PushConstantRange {
 				stage_flags: vk::ShaderStageFlags::VERTEX,
 				offset: 0,
-				size: mem::size_of::<PushConstant>() as u32,
+				size: mem::size_of::<PushConstants>() as u32,
 			},
 		];
 
@@ -265,18 +284,26 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 			p_push_constant_ranges: push_constant_ranges.as_ptr(),
 		};
 
-		unsafe {
-			device
-				.create_pipeline_layout(&info, None)
-				.expect("Failed to create pipeline layout")
-		}
+		unsafe { device.create_pipeline_layout(&info, None)? }
 	};
 
-	let vert_shader_module = shaders::load_shader_module(device, "shaders/gui/vert.spv").unwrap();
-	let frag_shader_module = shaders::load_shader_module(device, "shaders/gui/frag.spv").unwrap();
+	Ok((pipeline_layout, descriptor_set_layout))
+}
+
+pub fn load_pipeline(
+	device: &Device,
+	render_pass: vk::RenderPass,
+	pipeline_layout: vk::PipelineLayout,
+	descriptor_set_layout: vk::DescriptorSetLayout,
+	render_extent: vk::Extent2D,
+) -> Result<vk::Pipeline, vk::Result> {
+	let vert_shader_module = shaders::load_shader_module(device, "shaders/gui/vert.spv")?;
+	let frag_shader_module = shaders::load_shader_module(device, "shaders/gui/frag.spv")?;
 
 	let invoke_fn_name = CString::new("main").unwrap();
 
+
+	let width_height_ratio = render_extent.height as f32 / render_extent.width as f32;
 	let vertex_specialization_constants = [
 		vk::SpecializationMapEntry {
 			constant_id: 0,
@@ -284,12 +311,11 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 			size: mem::size_of::<f32>(),
 		}
 	];
-
 	let vertex_specialization_constants = vk::SpecializationInfo {
 		map_entry_count: vertex_specialization_constants.len() as _,
 		p_map_entries: vertex_specialization_constants.as_ptr(),
 		data_size: mem::size_of::<f32>(),
-		p_data: width_height_ratio as *const _ as _,
+		p_data: &width_height_ratio as *const _ as _,
 	};
 
 	let shader_infos = [
@@ -300,7 +326,7 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 			stage: vk::ShaderStageFlags::VERTEX,
 			module: vert_shader_module,
 			p_name: invoke_fn_name.as_ptr(),
-			p_specialization_info: ptr::null(),
+			p_specialization_info: &vertex_specialization_constants as *const _,
 		},
 		vk::PipelineShaderStageCreateInfo {
 			s_type: StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -350,15 +376,15 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 	let viewports = [vk::Viewport {
 		x: 0.0,
 		y: 0.0,
-		width: 1280_f32,
-		height: 720_f32,
+		width: render_extent.width as f32,
+		height: render_extent.height as f32,
 		min_depth: 0.0,
 		max_depth: 1.0,
 	}];
 
 	let scissors = [vk::Rect2D {
 		offset: vk::Offset2D { x: 0, y: 0 },
-		extent: vk::Extent2D { width: 1280, height: 720 },
+		extent: render_extent,
 	}];
 
 	let viewport_state = vk::PipelineViewportStateCreateInfo {
@@ -421,16 +447,6 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 		blend_constants: [0.0; 4],
 	};
 
-	let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-
-	let dynamic_states = vk::PipelineDynamicStateCreateInfo {
-		s_type: StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-		p_next: ptr::null(),
-		flags: vk::PipelineDynamicStateCreateFlags::empty(),
-		dynamic_state_count: dynamic_states.len() as u32,
-		p_dynamic_states: dynamic_states.as_ptr(),
-	};
-
 	let info = vk::GraphicsPipelineCreateInfo {
 		s_type: StructureType::GRAPHICS_PIPELINE_CREATE_INFO,
 		p_next: ptr::null(),
@@ -445,7 +461,7 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 		p_multisample_state: &multisample as *const _,
 		p_depth_stencil_state: ptr::null(),
 		p_color_blend_state: &color_blend_state as *const _,
-		p_dynamic_state: &dynamic_states as *const _,
+		p_dynamic_state: ptr::null(),
 		layout: pipeline_layout,
 		render_pass,
 		subpass: 0,
@@ -456,7 +472,7 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 	let pipeline = unsafe {
 		device
 			.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)
-			.expect("Failed to create pipeline.")[0]
+			.map_err(|(_, err)| err)?[0]
 	};
 
 	unsafe {
@@ -464,9 +480,5 @@ pub fn load(device: &Device, render_pass: vk::RenderPass, width_height_ratio: &f
 		device.destroy_shader_module(frag_shader_module, None);
 	}
 
-	Shader {
-		pipeline,
-		pipeline_layout,
-		descriptor_set_layout,
-	}
+	Ok(pipeline)
 }

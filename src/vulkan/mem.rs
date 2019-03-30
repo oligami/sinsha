@@ -119,7 +119,6 @@ impl<'vk_core> VkMemory<'vk_core> {
 				memory_properties,
 			);
 			let memory_type_index = result.ok_or(AllocErr::NoValidMemoryTypeIndex)?;
-			eprintln!("Memory type index of a buffer: {}", memory_type_index);
 
 			let memory_block = Self::new(buffer.vk_core, memory_size, memory_type_index)?;
 
@@ -143,7 +142,6 @@ impl<'vk_core> VkMemory<'vk_core> {
 				memory_properties,
 			);
 			let memory_type_index = result.ok_or(AllocErr::NoValidMemoryTypeIndex)?;
-			eprintln!("Memory type index of an image: {}", memory_type_index);
 
 			let memory_block = Self::new(image.vk_core, memory_size, memory_type_index)?;
 
@@ -243,10 +241,6 @@ impl<'vk_core> VkImage<'vk_core> {
 					},
 					None,
 				)?;
-
-			// examine memory requirements
-			let memory_requirements = vk_core.device.get_image_memory_requirements(raw_handle);
-			eprintln!("Memory requirements of an image: {:?}", memory_requirements);
 
 			Ok(
 				VkImage {

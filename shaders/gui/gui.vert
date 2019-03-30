@@ -10,12 +10,14 @@ layout(push_constant) uniform GuiUniform {
 } uni;
 
 layout(location = 0) out vec2 out_texture;
+layout(location = 1) out vec4 color_weight;
 
 // Specialization Constants: represent height/width ratio
-layout(constant_id = 0) const float RATIO = 720.0 / 1280.0;
+layout(constant_id = 0) const float RATIO = 1.0;
 
 void main() {
 	float x = vert_position_and_texture.x * RATIO;
 	gl_Position = vec4(vec2(x, vert_position_and_texture.y) + uni.position_bias, 0.0, 1.0);
 	out_texture = vert_position_and_texture.zw;
+	color_weight = uni.color_weight;
 }

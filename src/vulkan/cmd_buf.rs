@@ -372,34 +372,6 @@ impl<'vk_core, 'cmd_buf> CommandRecorder<'vk_core, 'cmd_buf> {
 					vk::SubpassContents::INLINE,
 				);
 
-			self.command_buffers.vk_core.device
-				.cmd_set_viewport(
-					self.command_buffers[self.index],
-					0,
-					&[
-						vk::Viewport {
-							x: 0.0,
-							y: 0.0,
-							width: vk_graphic.swapchain.data.extent.width as _,
-							height: vk_graphic.swapchain.data.extent.height as _,
-							min_depth: 0.0,
-							max_depth: 1.0,
-						}
-					]
-				);
-
-			self.command_buffers.vk_core.device
-				.cmd_set_scissor(
-					self.command_buffers[self.index],
-					0,
-					&[
-						vk::Rect2D {
-							offset: vk::Offset2D { x: 0, y: 0 },
-							extent: vk_graphic.swapchain.data.extent,
-						}
-					]
-				);
-
 			GraphicCommandRecorder {
 				command_recorder: self,
 				vk_graphic,
@@ -467,17 +439,14 @@ impl<'vk_core, 'vk_graphic, 'cmd_buf, T> GraphicCommandRecorder<'vk_core, 'vk_gr
 impl<'vk_core, 'vk_graphic, 'cmd_buf> GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, Gui> {
 	pub fn draw(
 		self,
-		vertex_buffer: &VkBuffer<'vk_core>,
-		vertex_offset: u32,
-		descriptor_set: &gui::DescriptorSets,
-		push_constant: &gui::PushConstant,
+		gui_obj: &gui::Obj,
 	) -> GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, Gui> {
 		unsafe {
 			self.vk_graphic.vk_core.device
 				.cmd_bind_vertex_buffers(
 					self.command_recorder.command_buffers[self.command_recorder.index],
 					0,
-					&[vertex_buffer.raw_handle],
+					&[gui_obj.vertex.raw_handle],
 					&[0],
 				);
 			self.vk_graphic.vk_core.device
@@ -486,7 +455,7 @@ impl<'vk_core, 'vk_graphic, 'cmd_buf> GraphicCommandRecorder<'vk_core, 'vk_graph
 					vk::PipelineBindPoint::GRAPHICS,
 					self.vk_graphic.shaders.gui.pipeline_layout,
 					0,
-					&[descriptor_set[self.command_recorder.index]],
+					&[gui_obj.sets[self.command_recorder.index]],
 					&[],
 				);
 			self.vk_graphic.vk_core.device
@@ -495,14 +464,14 @@ impl<'vk_core, 'vk_graphic, 'cmd_buf> GraphicCommandRecorder<'vk_core, 'vk_graph
 					self.vk_graphic.shaders.gui.pipeline_layout,
 					vk::ShaderStageFlags::VERTEX,
 					0,
-					push_constant.as_ref(),
+					gui_obj.push_constants.as_ref(),
 				);
 			self.vk_graphic.vk_core.device
 				.cmd_draw(
 					self.command_recorder.command_buffers[self.command_recorder.index],
 					4,
 					1,
-					vertex_offset,
+					gui_obj.vertex_offset,
 					0,
 				);
 

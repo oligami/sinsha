@@ -15,8 +15,8 @@ use std::error::Error;
 pub fn load_shader_module<P: AsRef<Path>>(
 	device: &Device,
 	path_to_spv: P
-) -> Result<vk::ShaderModule, Box<dyn Error>> {
-	let contents = fs::read(path_to_spv)?;
+) -> Result<vk::ShaderModule, vk::Result> {
+	let contents = fs::read(path_to_spv).unwrap();
 	let info = vk::ShaderModuleCreateInfo {
 		s_type: StructureType::SHADER_MODULE_CREATE_INFO,
 		p_next: ptr::null(),
@@ -42,10 +42,40 @@ impl Shaders {
 	pub fn load(
 		device: &Device,
 		render_pass: vk::RenderPass,
-		specialization_constants: (f32, )) -> Self {
-		Self {
-			gui: self::gui::load(device, render_pass, &specialization_constants.0),
-		}
+		render_extent: vk::Extent2D,
+	) -> Result<Self, vk::Result> {
+		let gui = {
+			let (pipeline_layout, descriptor_set_layout) = gui::load_layouts(&device)?;
+			let pipeline = gui::load_pipeline(
+				&device,
+				render_pass,
+				pipeline_layout,
+				descriptor_set_layout,
+				render_extent,
+			)?;
+
+			Shader { pipeline_layout, descriptor_set_layout, pipeline }
+		};
+
+		Ok(Self { gui })
+	}
+
+	pub fn reload(
+		&mut self,
+		device: &Device,
+		render_pass: vk::RenderPass,
+		render_extent: vk::Extent2D,
+	) -> Result<(), vk::Result> {
+		unsafe { device.destroy_pipeline(self.gui.pipeline, None); }
+		self.gui.pipeline = gui::load_pipeline(
+			device,
+			render_pass,
+			self.gui.pipeline_layout,
+			self.gui.descriptor_set_layout,
+			render_extent,
+		)?;
+
+		Ok(())
 	}
 }
 

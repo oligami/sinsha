@@ -57,14 +57,9 @@ struct Swapchain {
 struct SwapchainData {
 	extent: vk::Extent2D,
 	format: vk::Format,
-	usage: vk::ImageUsageFlags,
 	min_image_count: u32,
 	color_space: vk::ColorSpaceKHR,
-	sharing_mode: vk::SharingMode,
-	pre_transform: vk::SurfaceTransformFlagsKHR,
-	composite_alpha: vk::CompositeAlphaFlagsKHR,
 	present_mode: vk::PresentModeKHR,
-	clipped: vk::Bool32,
 }
 
 pub struct VkGraphic<'vk_core> {
@@ -256,7 +251,7 @@ impl<'vk_core> VkGraphic<'vk_core> {
 	pub fn new(vk_core: &'vk_core VkCore) -> Self {
 		unsafe {
 			// create swapchain
-			let (image_format, image_color_space) = vk_core.surface
+			let (format, color_space) = vk_core.surface
 				.loader
 				.get_physical_device_surface_formats(
 					vk_core.physical_device.raw_handle,
@@ -300,8 +295,6 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				)
 				.unwrap();
 
-			let image_extent = surface_capabilities.current_extent;
-
 			let requested_image_count = surface_capabilities.min_image_count + 1;
 			let image_count = if requested_image_count > surface_capabilities.max_image_count
 				&& surface_capabilities.max_image_count > 0
@@ -311,91 +304,18 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				requested_image_count
 			};
 
-			let swapchain_info = vk::SwapchainCreateInfoKHR {
-				s_type: StructureType::SWAPCHAIN_CREATE_INFO_KHR,
-				p_next: ptr::null(),
-				flags: vk::SwapchainCreateFlagsKHR::empty(),
-				surface: vk_core.surface.raw_handle,
+			let data = SwapchainData {
 				min_image_count: image_count,
-				image_format,
-				image_color_space,
-				image_extent,
-				image_array_layers: 1,
-				image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-				image_sharing_mode: vk::SharingMode::EXCLUSIVE,
-				queue_family_index_count: vk_core.physical_device.queue_family_index_count(),
-				p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
-				pre_transform: surface_capabilities.current_transform,
-				composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+				format,
+				color_space,
+				extent: surface_capabilities.current_extent,
 				present_mode,
-				clipped: vk::TRUE,
-				old_swapchain: vk::SwapchainKHR::null(),
 			};
 
-			let swapchain = {
-				let data = SwapchainData {
-					min_image_count: swapchain_info.min_image_count,
-					format: swapchain_info.image_format,
-					color_space: swapchain_info.image_color_space,
-					extent: swapchain_info.image_extent,
-					usage: swapchain_info.image_usage,
-					sharing_mode: swapchain_info.image_sharing_mode,
-					pre_transform: swapchain_info.pre_transform,
-					present_mode: swapchain_info.present_mode,
-					composite_alpha: swapchain_info.composite_alpha,
-					clipped: swapchain_info.clipped,
-				};
-
-				let loader = khr::Swapchain::new(&vk_core.instance, &vk_core.device);
-
-				let raw_handle = loader
-					.create_swapchain(&swapchain_info, None)
-					.expect("Swap chain creation has failed.");
-
-				let images = loader
-					.get_swapchain_images(raw_handle)
-					.expect("Failed to get swap chain images.");
-
-				let images: Vec<_> = images
-					.into_iter()
-					.map(|image| {
-						let image_view_info = vk::ImageViewCreateInfo {
-							s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
-							p_next: ptr::null(),
-							flags: vk::ImageViewCreateFlags::empty(),
-							image,
-							view_type: vk::ImageViewType::TYPE_2D,
-							format: image_format,
-							components: vk::ComponentMapping {
-								r: vk::ComponentSwizzle::IDENTITY,
-								g: vk::ComponentSwizzle::IDENTITY,
-								b: vk::ComponentSwizzle::IDENTITY,
-								a: vk::ComponentSwizzle::IDENTITY,
-							},
-							subresource_range: vk::ImageSubresourceRange {
-								aspect_mask: vk::ImageAspectFlags::COLOR,
-								base_mip_level: 0,
-								level_count: 1,
-								base_array_layer: 0,
-								layer_count: 1,
-							},
-						};
-
-						let image_view = vk_core.device
-							.create_image_view(&image_view_info, None)
-							.unwrap();
-
-						(image, image_view)
-					})
-					.collect();
-
-				Swapchain {
-					loader,
-					raw_handle,
-					images,
-					data,
-				}
-			};
+			let loader = khr::Swapchain::new(&vk_core.instance, &vk_core.device);
+			let (raw_handle, images) = Self::create_swapchain(&vk_core, &loader, &data, None)
+				.unwrap();
+			let swapchain = Swapchain { loader, raw_handle, images, data };
 
 			// create render pass
 			let attachments = [
@@ -468,30 +388,14 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				let extent = &swapchain.data.extent;
 				extent.height as f32 / extent.width as f32
 			};
-			let specialization_constants = (width_height_ratio, );
-			let shaders = Shaders::load(&vk_core.device, render_pass, specialization_constants);
+			let shaders = Shaders::load(&vk_core.device, render_pass, swapchain.data.extent).unwrap();
 
 			// create framebuffer
-			let mut framebuffers = Vec::with_capacity(swapchain.images.len());
-			for (_, image_view) in swapchain.images.iter() {
-				let framebuffer_info = vk::FramebufferCreateInfo {
-					s_type: StructureType::FRAMEBUFFER_CREATE_INFO,
-					p_next: ptr::null(),
-					flags: vk::FramebufferCreateFlags::empty(),
-					render_pass,
-					attachment_count: 1,
-					p_attachments: image_view as *const _,
-					width: swapchain.data.extent.width,
-					height: swapchain.data.extent.height,
-					layers: 1,
-				};
-
-				framebuffers.push(
-					vk_core.device
-						.create_framebuffer(&framebuffer_info, None)
-						.expect("Failed to create a framebuffer."),
-				);
-			}
+			let framebuffers = Self::create_framebuffers(
+				&vk_core.device,
+				render_pass,
+				&swapchain,
+			).unwrap();
 
 			Self {
 				vk_core,
@@ -547,8 +451,151 @@ impl<'vk_core> VkGraphic<'vk_core> {
 		}
 	}
 
+	pub fn recreate(&mut self) -> Result<(), vk::Result> {
+		unsafe {
+			// recreate swapcahin
+			let surface_capabilities = self.vk_core.surface.loader
+				.get_physical_device_surface_capabilities(
+					self.vk_core.physical_device.raw_handle,
+					self.vk_core.surface.raw_handle,
+				)?;
+			self.swapchain.data.extent = surface_capabilities.current_extent;
+
+			self.swapchain.images
+				.iter()
+				.for_each(|&(_, view)| self.vk_core.device.destroy_image_view(view, None));
+
+			let (raw_handle, images) = Self::create_swapchain(
+				&self.vk_core,
+				&self.swapchain.loader,
+				&self.swapchain.data,
+				Some(self.swapchain.raw_handle),
+			)?;
+			self.swapchain.raw_handle = raw_handle;
+			self.swapchain.images = images;
+
+			// recreate framebuffers
+			self.framebuffers
+				.iter()
+				.for_each(|&fb| self.vk_core.device.destroy_framebuffer(fb, None));
+			self.framebuffers = Self::create_framebuffers(
+				&self.vk_core.device,
+				self.render_pass,
+				&self.swapchain,
+			)?;
+
+			// recreate graphic pipelines
+			self.shaders
+				.reload(&self.vk_core.device, self.render_pass, self.swapchain.data.extent)?;
+
+			Ok(())
+		}
+	}
+
 	#[inline]
 	pub fn images_num(&self) -> usize { self.swapchain.images_num() }
+
+	fn create_swapchain(
+		vk_core: &VkCore,
+		loader: &khr::Swapchain,
+		data: &SwapchainData,
+		old_swapchain: Option<vk::SwapchainKHR>,
+	) -> Result<(vk::SwapchainKHR, Vec<(vk::Image, vk::ImageView)>), vk::Result> {
+		unsafe {
+			let swapchain_info = vk::SwapchainCreateInfoKHR {
+				s_type: StructureType::SWAPCHAIN_CREATE_INFO_KHR,
+				p_next: ptr::null(),
+				flags: vk::SwapchainCreateFlagsKHR::empty(),
+				surface: vk_core.surface.raw_handle,
+				min_image_count: data.min_image_count,
+				image_format: data.format,
+				image_color_space: data.color_space,
+				image_extent: data.extent,
+				image_array_layers: 1,
+				image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+				image_sharing_mode: vk::SharingMode::EXCLUSIVE,
+				queue_family_index_count: vk_core.physical_device.queue_family_index_count(),
+				p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
+				pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
+				composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
+				present_mode: data.present_mode,
+				clipped: vk::TRUE,
+				old_swapchain: old_swapchain.unwrap_or(vk::SwapchainKHR::null()),
+			};
+
+			let raw_handle = loader
+				.create_swapchain(&swapchain_info, None)
+				.expect("Swap chain creation has failed.");
+
+			old_swapchain.map(|raw_handle| loader.destroy_swapchain(raw_handle, None));
+
+			let images = loader
+				.get_swapchain_images(raw_handle)
+				.expect("Failed to get swap chain images.");
+
+			let images: Vec<_> = images
+				.into_iter()
+				.map(|image| {
+					let image_view_info = vk::ImageViewCreateInfo {
+						s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+						p_next: ptr::null(),
+						flags: vk::ImageViewCreateFlags::empty(),
+						image,
+						view_type: vk::ImageViewType::TYPE_2D,
+						format: data.format,
+						components: vk::ComponentMapping {
+							r: vk::ComponentSwizzle::IDENTITY,
+							g: vk::ComponentSwizzle::IDENTITY,
+							b: vk::ComponentSwizzle::IDENTITY,
+							a: vk::ComponentSwizzle::IDENTITY,
+						},
+						subresource_range: vk::ImageSubresourceRange {
+							aspect_mask: vk::ImageAspectFlags::COLOR,
+							base_mip_level: 0,
+							level_count: 1,
+							base_array_layer: 0,
+							layer_count: 1,
+						},
+					};
+
+					let image_view = vk_core.device
+						.create_image_view(&image_view_info, None)
+						.unwrap();
+
+					(image, image_view)
+				})
+				.collect();
+
+			Ok((raw_handle, images))
+		}
+	}
+
+	fn create_framebuffers(
+		device: &Device,
+		render_pass: vk::RenderPass,
+		swapchain: &Swapchain,
+	) -> Result<Vec<vk::Framebuffer>, vk::Result> {
+		unsafe {
+			let mut framebuffers = Vec::with_capacity(swapchain.images.len());
+			for (_, image_view) in swapchain.images.iter() {
+				let framebuffer_info = vk::FramebufferCreateInfo {
+					s_type: StructureType::FRAMEBUFFER_CREATE_INFO,
+					p_next: ptr::null(),
+					flags: vk::FramebufferCreateFlags::empty(),
+					render_pass,
+					attachment_count: 1,
+					p_attachments: image_view as *const _,
+					width: swapchain.data.extent.width,
+					height: swapchain.data.extent.height,
+					layers: 1,
+				};
+
+				framebuffers.push(device.create_framebuffer(&framebuffer_info, None)?);
+			}
+
+			Ok(framebuffers)
+		}
+	}
 }
 
 impl Drop for VkGraphic<'_> {
@@ -647,6 +694,11 @@ impl<'vk_core> VkFence<'vk_core> {
 		}
 	}
 
+	pub fn reset(&mut self) -> Result<(), vk::Result> {
+		unsafe { self.vk_core.device.reset_fences(&[self.raw_handle])? }
+		Ok(())
+	}
+
 	pub fn wait(&self, timeout: Option<u64>) -> Result<(), vk::Result> {
 		unsafe {
 			self.vk_core.device.wait_for_fences(&[self.raw_handle], false, timeout.unwrap_or(!0))?;
@@ -710,15 +762,3 @@ unsafe fn surface(entry: &Entry, instance: &Instance, window: &winit::Window) ->
 		.expect("Failed to create win32 surface.")
 }
 
-unsafe fn create_semaphore(device: &Device) -> vk::Semaphore {
-	device
-		.create_semaphore(
-			&vk::SemaphoreCreateInfo {
-				s_type: StructureType::SEMAPHORE_CREATE_INFO,
-				p_next: ptr::null(),
-				flags: vk::SemaphoreCreateFlags::empty(),
-			},
-			None,
-		)
-		.unwrap()
-}

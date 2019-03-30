@@ -3,6 +3,7 @@ use winit::*;
 
 use crate::vulkan::*;
 use crate::linear_algebra::*;
+use crate::interaction::*;
 
 use std::mem;
 use std::ops;
@@ -11,7 +12,7 @@ use std::io::Write;
 use std::error::Error;
 use std::time::SystemTime;
 
-const GUI_SCALE: f32 = 100_f32;
+const GUI_SCALE: f32 = 200_f32;
 
 pub struct Rect {
 	origin: XY,
@@ -44,6 +45,17 @@ impl Rect {
 			),
 		]
 	}
+
+	fn to_push_constants(&self) -> gui::PushConstants {
+		gui::PushConstants::new(RGBA::default(), self.origin)
+	}
+
+	fn to_area(&self) -> Area2D {
+		Area2D {
+			x: self.left / GUI_SCALE + self.origin.x .. self.right / GUI_SCALE + self.origin.x,
+			y: self.top / GUI_SCALE + self.origin.y .. self.bottom / GUI_SCALE + self.origin.y,
+		}
+	}
 }
 
 struct StartMenu;
@@ -72,10 +84,40 @@ impl StartMenu {
 	};
 }
 
+struct Button<'a, 'b, 'c> {
+	obj: gui::Obj<'a, 'b, 'c>,
+	area: Area2D,
+}
+
+#[derive(Debug)]
+struct Area2D {
+	x: ops::Range<f32>,
+	y: ops::Range<f32>,
+}
+
+impl<'a, 'b, 'c> Button<'a, 'b, 'c> {
+	fn new(obj: gui::Obj<'a, 'b, 'c>, area: Area2D) -> Self {
+		Self { obj, area }
+	}
+
+	fn on_mouse(&mut self, interaction: &InteractionDevices, rgba: RGBA) {
+		if self.area.contain(interaction.mouse.position) {
+			self.obj.set_rgba(rgba);
+		} else {
+			self.obj.set_rgba(RGBA::default());
+		}
+	}
+}
+
+impl Area2D {
+	fn contain(&self, XY { x, y } : XY) -> bool {
+		self.x.start <= x && x <= self.x.end && self.y.start <= y && y <= self.y.end
+	}
+}
 
 pub fn run(
 	vk_core: &VkCore,
-	vk_graphic: &VkGraphic,
+	vk_graphic: &mut VkGraphic,
 	window: &Window,
 	events_loop: &mut EventsLoop,
 ) -> () {
@@ -229,60 +271,75 @@ pub fn run(
 		&[(&texture_view, &sampler); 2],
 	).unwrap();
 
-	for i in 0..3 {
-		let mut recorder = command_buffers
-			.recorder(i, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE)
-			.unwrap();
+	let start_button = gui::Obj::new(
+		&vertex_buffer,
+		0,
+		&texture[0],
+		StartMenu::START_BUTTON.to_push_constants(),
+	);
 
-		let push_constant = gui::PushConstant::new(RGBA::default(), XY::zero());
-		recorder
-			.into_graphic(vk_graphic, [[0.0, 0.0, 0.0, 1.0]])
-			.bind_gui_pipeline()
-			.draw(
-				&vertex_buffer,
-				0,
-				&texture[0],
-				&push_constant,
-			)
-			.draw(
-				&vertex_buffer,
-				4,
-				&texture[1],
-				&push_constant,
-			)
-			.end()
-			.end()
-			.unwrap();
-	}
+	let mut start_button = Button::new(start_button, StartMenu::START_BUTTON.to_area());
 
-	let image_acquired = VkSemaphore::new(vk_core).unwrap();
+	let quit_button = gui::Obj::new(
+		&vertex_buffer,
+		4,
+		&texture[1],
+		StartMenu::QUIT_BUTTON.to_push_constants(),
+	);
+
+	let mut command_buffers_unused = [
+		VkFence::new(vk_core, true).unwrap(),
+		VkFence::new(vk_core, true).unwrap(),
+		VkFence::new(vk_core, true).unwrap(),
+	];
+	let image_acquire = VkSemaphore::new(vk_core).unwrap();
 	let render_finish = VkSemaphore::new(vk_core).unwrap();
 
 	let mut fps_parser = 0_u64;
 	let mut timer = SystemTime::now();
+	let mut interaction = InteractionDevices::new(window);
 
 	loop {
-		let image_index = vk_graphic.next_image(Some(&image_acquired), None).unwrap();
+		let image_index = vk_graphic.next_image(Some(&image_acquire), None).unwrap();
+
+		command_buffers_unused[image_index].wait(None).unwrap();
+		command_buffers_unused[image_index].reset().unwrap();
+		command_buffers
+			.recorder(image_index, vk::CommandBufferUsageFlags::SIMULTANEOUS_USE)
+			.unwrap()
+			.into_graphic(&vk_graphic, [[0.1, 0.1, 0.1, 1.0]])
+			.bind_gui_pipeline()
+			.draw(&start_button.obj)
+			.draw(&quit_button)
+			.end()
+			.end()
+			.unwrap();
 
 		command_buffers
 			.queue_submit(
 				image_index,
 				vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-				&[image_acquired],
+				&[image_acquire],
 				&[render_finish],
-				None,
+				Some(&command_buffers_unused[image_index]),
 			)
 			.unwrap();
 
-		vk_graphic
-			.present(
-				image_index as _,
-				&[render_finish],
-			)
-			.unwrap();
+		if let Err(err) = vk_graphic.present(image_index as _, &[render_finish]) {
+			vk_core.queue_wait_idle().unwrap();
+			match err {
+				vk::Result::ERROR_OUT_OF_DATE_KHR | vk::Result::SUBOPTIMAL_KHR => {
+					vk_graphic.recreate().unwrap();
+				},
+				_ => Err(err).unwrap(),
+			}
+			continue;
+		}
+
 
 		let mut end = false;
 		events_loop.poll_events(|event| {
+			interaction.event_update(&event);
 			match event {
 				Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => end = true,
 				_ => (),
@@ -291,16 +348,20 @@ pub fn run(
 
 		if end { break; }
 
+		start_button.on_mouse(&interaction, RGBA::new(0.8, 0.8, 0.8, 1.0));
+
 		if fps_parser % 1000 == 0 {
 			let time = timer.elapsed().unwrap().as_micros() as f32 / 1_000_000_f32;
 			timer = SystemTime::now();
 			eprint!("\rFPS: {}", 1000_f32 / time);
 		}
 		fps_parser += 1;
+
+		interaction.clear();
 	}
 
 	vk_core.queue_wait_idle().unwrap();
-	image_acquired.drop(vk_core);
+	image_acquire.drop(vk_core);
 	render_finish.drop(vk_core);
 }
 
