@@ -1,4 +1,5 @@
 pub mod gui;
+pub mod d3;
 
 use crate::vulkan::*;
 
@@ -36,6 +37,7 @@ pub struct Shader {
 
 pub struct Shaders {
 	pub gui: Shader,
+	pub d3: Shader,
 }
 
 impl Shaders {
@@ -45,19 +47,35 @@ impl Shaders {
 		render_extent: vk::Extent2D,
 	) -> Result<Self, vk::Result> {
 		let gui = {
-			let (pipeline_layout, descriptor_set_layout) = gui::load_layouts(&device)?;
+			let (descriptor_set_layout, pipeline_layout) = gui::load_layouts(&device)?;
 			let pipeline = gui::load_pipeline(
-				&device,
+				device,
 				render_pass,
-				pipeline_layout,
 				descriptor_set_layout,
+				pipeline_layout,
 				render_extent,
 			)?;
 
 			Shader { pipeline_layout, descriptor_set_layout, pipeline }
 		};
 
-		Ok(Self { gui })
+		let d3 = {
+			let (descriptor_set_layout, pipeline_layout) = d3::load_layouts(&device)?;
+			let pipeline = d3::load_pipeline(
+				device,
+				render_pass,
+				descriptor_set_layout,
+				pipeline_layout,
+				1.0,
+				0.01,
+				100.0,
+				render_extent,
+			)?;
+
+			Shader { descriptor_set_layout, pipeline_layout, pipeline }
+		};
+
+		Ok(Self { gui, d3 })
 	}
 
 	pub fn reload(
@@ -70,8 +88,8 @@ impl Shaders {
 		self.gui.pipeline = gui::load_pipeline(
 			device,
 			render_pass,
-			self.gui.pipeline_layout,
 			self.gui.descriptor_set_layout,
+			self.gui.pipeline_layout,
 			render_extent,
 		)?;
 

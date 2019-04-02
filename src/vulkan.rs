@@ -39,7 +39,7 @@ struct Surface {
 }
 
 pub struct VkCore {
-	entry: Entry,
+	_entry: Entry,
 	instance: Instance,
 	device: Device,
 	queue: vk::Queue,
@@ -209,7 +209,7 @@ impl VkCore {
 			let queue = device.get_device_queue(physical_device.queue_family_index, 0);
 
 			Self {
-				entry,
+				_entry: entry,
 				instance,
 				physical_device,
 				device,
@@ -601,12 +601,11 @@ impl<'vk_core> VkGraphic<'vk_core> {
 impl Drop for VkGraphic<'_> {
 	fn drop(&mut self) {
 		unsafe {
+			let device = &self.vk_core.device;
 			self.framebuffers
 				.iter()
-				.for_each(|&framebuffer| {
-					self.vk_core.device.destroy_framebuffer(framebuffer, None);
-				});
-			self.vk_core.device.destroy_render_pass(self.render_pass, None);
+				.for_each(|&framebuffer| device.destroy_framebuffer(framebuffer, None));
+			device.destroy_render_pass(self.render_pass, None);
 			self.swapchain.images
 				.iter()
 				.for_each(|&(_image, view)| {
@@ -615,10 +614,12 @@ impl Drop for VkGraphic<'_> {
 					self.vk_core.device.destroy_image_view(view, None);
 				});
 			self.swapchain.loader.destroy_swapchain(self.swapchain.raw_handle, None);
-			self.vk_core.device.destroy_pipeline(self.shaders.gui.pipeline, None);
-			self.vk_core.device.destroy_pipeline_layout(self.shaders.gui.pipeline_layout, None);
-			self.vk_core.device
-				.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
+			device.destroy_pipeline(self.shaders.gui.pipeline, None);
+			device.destroy_pipeline_layout(self.shaders.gui.pipeline_layout, None);
+			device.destroy_descriptor_set_layout(self.shaders.gui.descriptor_set_layout, None);
+			device.destroy_pipeline(self.shaders.d3.pipeline, None);
+			device.destroy_pipeline_layout(self.shaders.d3.pipeline_layout, None);
+			device.destroy_descriptor_set_layout(self.shaders.d3.descriptor_set_layout, None);
 		}
 	}
 }

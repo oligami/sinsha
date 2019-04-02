@@ -242,7 +242,7 @@ impl Drop for DescriptorPool<'_> {
 
 pub fn load_layouts(
 	device: &Device
-) -> Result<(vk::PipelineLayout, vk::DescriptorSetLayout), vk::Result> {
+) -> Result<(vk::DescriptorSetLayout, vk::PipelineLayout), vk::Result> {
 	let descriptor_set_layout = {
 		let descriptor_set_bindings = [
 			vk::DescriptorSetLayoutBinding {
@@ -287,21 +287,20 @@ pub fn load_layouts(
 		unsafe { device.create_pipeline_layout(&info, None)? }
 	};
 
-	Ok((pipeline_layout, descriptor_set_layout))
+	Ok((descriptor_set_layout, pipeline_layout))
 }
 
 pub fn load_pipeline(
 	device: &Device,
 	render_pass: vk::RenderPass,
-	pipeline_layout: vk::PipelineLayout,
 	descriptor_set_layout: vk::DescriptorSetLayout,
+	pipeline_layout: vk::PipelineLayout,
 	render_extent: vk::Extent2D,
 ) -> Result<vk::Pipeline, vk::Result> {
 	let vert_shader_module = shaders::load_shader_module(device, "shaders/gui/vert.spv")?;
 	let frag_shader_module = shaders::load_shader_module(device, "shaders/gui/frag.spv")?;
 
 	let invoke_fn_name = CString::new("main").unwrap();
-
 
 	let width_height_ratio = render_extent.height as f32 / render_extent.width as f32;
 	let vertex_specialization_constants = [
