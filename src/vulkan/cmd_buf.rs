@@ -23,6 +23,7 @@ pub struct CommandRecorder<'vk_core, 'cmd_buf> {
 
 pub struct InRenderPass;
 pub struct Gui;
+pub struct D3;
 
 /// The number of this struct's command buffers should be as much as that of swapchain's.
 pub struct GraphicCommandRecorder<'vk_core, 'vk_graphic, 'cmd_buf, T> {

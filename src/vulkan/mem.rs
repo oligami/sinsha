@@ -14,11 +14,34 @@ use std::marker::PhantomData;
 use std::error::Error;
 use std::path::Path;
 
+pub trait Memory {
+	fn alloc_sized<T>(&mut self) -> ();
+	fn alloc_unsized<T>(&mut self, len: usize) -> ();
+}
+
+pub trait MemoryStack: Memory {
+	fn push_buffer<T>(&mut self) -> ();
+	fn pop_buffer(&mut self) -> ();
+}
+
 pub struct VkMemory<'vk_core> {
 	vk_core: &'vk_core VkCore,
 	raw_handle: vk::DeviceMemory,
 	size: vk::DeviceSize,
 	type_index: u32,
+}
+
+pub struct VkSubBuffer<T> {
+	buffer_id: vk::Buffer,
+	len: usize,
+	_marker: PhantomData<T>,
+}
+
+pub struct VkBufferSlice<'vk_core, T> {
+	vk_core: &'vk_core VkCore,
+	id: vk::Buffer,
+	len: usize,
+	_marker: PhantomData<T>,
 }
 
 pub struct VkBuffer<'vk_core> {

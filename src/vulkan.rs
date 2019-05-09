@@ -1,4 +1,5 @@
 mod mem;
+mod mem_kai;
 mod shaders;
 mod cmd_buf;
 
