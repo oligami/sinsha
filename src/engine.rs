@@ -26,7 +26,7 @@ impl Engine {
 				.iter()
 				.zip(0..memory_properties.memory_type_count)
 				.for_each(|(ty, i)| eprintln!(
-					"[memory (type {:2})] properties: {}, heap_index: {}",
+					"[memory (type {:2})] properties: {:?}, heap_index: {}",
 					i, ty.property_flags, ty.heap_index,
 				));
 			eprintln!();
@@ -35,7 +35,7 @@ impl Engine {
 				.iter()
 				.zip(0..memory_properties.memory_heap_count)
 				.for_each(|(heap, i)| eprintln!(
-					"[heap{}] size: {}, flags: {}",
+					"[heap{}] size: {}, flags: {:?}",
 					i, heap.size, heap.flags,
 				));
 			eprintln!();

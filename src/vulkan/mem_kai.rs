@@ -1,3 +1,5 @@
+mod alloc;
+
 use ash::vk;
 use ash::vk::StructureType;
 use ash::version::DeviceV1_0;
@@ -47,37 +49,20 @@ mod memory_type {
 		fn flags() -> MP { T::flags() | U::flags() }
 	}
 
-	impl<T, U, V> MemoryProperties for (T, U, V)
-		where T: MemoryProperties,
-			  U: MemoryProperties,
-			  V: MemoryProperties
-	{
-		fn flags() -> MP { T::flags() | U::flags() | V::flags() }
-	}
-
 	pub trait DeviceLocal: MemoryProperties {}
+	impl DeviceLocal for DeviceLocalFlag {}
+
 	pub trait HostVisible: MemoryProperties {}
+	impl HostVisible for HostVisibleFlag {}
+
 	pub trait HostCoherent: MemoryProperties {}
-
-	macro_rules! impl_marker_trait {
-		($t:ident, $s:ty) => {
-			impl<T> $t for ($s, T) where T: MemoryProperties {}
-			impl<T> $t for (T, $s) where T: MemoryProperties {}
-			impl<T, U> $t for ($s, T, U) where T: MemoryProperties, U: MemoryProperties {}
-			impl<T, U> $t for (T, $s, U) where T: MemoryProperties, U: MemoryProperties {}
-			impl<T, U> $t for (T, U, $s) where T: MemoryProperties, U: MemoryProperties {}
-		};
-	}
-
-	impl_marker_trait!(DeviceLocal, DeviceLocalFlag);
-	impl_marker_trait!(HostVisible, HostVisibleFlag);
-	impl_marker_trait!(HostCoherent, HostCoherentFlag);
+	impl HostCoherent for HostCoherentFlag {}
 }
 
 pub use self::usage::{BufferUsage, ImageUsage};
 mod usage {
 	use ash::vk::BufferUsageFlags as BU;
-	
+
 	pub trait BufferUsage {
 		fn flags() -> BU;
 	}
@@ -171,15 +156,45 @@ pub trait GraphicPipeline {
 pub type VkResult<T> = Result<T, vk::Result>;
 
 impl<'vk_core, M> VkMemory<'vk_core, M> where M: MemoryProperties {
-	fn new(vk_core: &VkCore, size: u64) -> VkResult<Self> {
-		let flags = M::flags();
-		unimplemented!()
+	fn new(vk_core: &'vk_core VkCore, size: u64, type_index: u32) -> VkResult<Self> {
+		debug_assert!(type_index < vk_core.memory_properties().memory_type_count);
+
+		debug_assert!(
+			vk_core
+				.memory_properties()
+				.memory_types[type_index as usize]
+				.property_flags
+				.contains(M::flags())
+		);
+
+		unsafe {
+			let info = vk::MemoryAllocateInfo {
+				s_type: StructureType::MEMORY_ALLOCATE_INFO,
+				p_next: ptr::null(),
+				allocation_size: size,
+				memory_type_index: type_index,
+			};
+
+			let handle = vk_core.device.allocate_memory(&info, None)?;
+
+			Ok(Self { vk_core, handle, size, _type: PhantomData::<M> })
+		}
 	}
 
-	fn buffer<U>(range: ops::Range<u64>) -> VkResult<VkBuffer<'vk_core, M, U>>
+	unsafe fn buffer<U>(&self, range: ops::Range<u64>) -> VkResult<VkBuffer<'vk_core, M, U>>
 		where U: BufferUsage
 	{
-		let flags = U::flags();
+		let info = vk::BufferCreateInfo {
+			s_type: StructureType::BUFFER_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::BufferCreateFlags::empty(),
+			size: range.end - range.start,
+			usage: U::flags(),
+			sharing_mode: vk::SharingMode::EXCLUSIVE,
+			queue_family_index_count: self.vk_core.physical_device.queue_family_index_count(),
+			p_queue_family_indices: self.vk_core.physical_device.queue_family_index_ptr(),
+		};
+
 		unimplemented!()
 	}
 }
@@ -190,9 +205,3 @@ impl<'vk_core, M> VkMemory<'vk_core, M> where M: HostVisible + HostCoherent {
 	}
 }
 
-fn memory(vk_core: &VkCore) {
-	let mut memory: VkMemory<(DeviceLocalFlag, (HostVisibleFlag, HostCoherentFlag))>
-		= VkMemory::new(vk_core, 100).unwrap();
-
-	memory.write(&mut [0, 1, 2]).unwrap();
-}
