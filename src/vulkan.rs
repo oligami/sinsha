@@ -6,6 +6,7 @@ mod cmd_buf;
 pub use self::shaders::*;
 pub use self::mem::*;
 pub use self::cmd_buf::*;
+pub use self::mem_kai::alloc;
 
 use crate::linear_algebra::*;
 

@@ -1,4 +1,4 @@
-mod alloc;
+pub mod alloc;
 
 use ash::vk;
 use ash::vk::StructureType;
