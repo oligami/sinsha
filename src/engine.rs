@@ -19,9 +19,9 @@ impl Engine {
 		let (window, mut events_loop) = Engine::create_window();
 		let instance = VkInstance::new();
 		let surface = VkSurfaceKHR::new(instance.clone(), window);
-		let device = VkDevice::new_with_a_graphics_queue(instance, surface.clone(), 1.0);
+		let (device, queue) = VkDevice::new_with_a_graphics_queue(instance, surface.clone(), 1.0);
 
-		start_menu::run_kai(&vk_core, &mut vk_graphic, &window, &mut events_loop);
+		start_menu::run_kai(device.clone(), queue.clone(), &mut events_loop);
 	}
 }
 

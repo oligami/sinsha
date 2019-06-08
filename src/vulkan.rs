@@ -63,6 +63,7 @@ pub struct VkPhysicalDevice {
 }
 
 pub struct VkSurfaceKHR {
+	instance: Arc<VkInstance>,
 	loader: khr::Surface,
 	handle: vk::SurfaceKHR,
 	window: Window,
@@ -207,7 +208,7 @@ impl VkSurfaceKHR {
 		let loader = khr::Surface::new(&instance.entry, &instance.handle);
 		let handle = unsafe { Self::handle(&instance.entry, &instance.handle, &window) };
 
-		Arc::new(Self { loader, handle, window })
+		Arc::new(Self { instance, loader, handle, window })
 	}
 
 	#[cfg(target_os = "windows")]
@@ -304,7 +305,7 @@ impl VkDevice {
 					.create_device(
 						instance.physical_devices[physical_device_index].handle,
 						&device_info,
-						None
+						None,
 					)
 					.unwrap()
 			};
@@ -325,6 +326,7 @@ impl VkDevice {
 			)
 		};
 
+
 		(device, queue)
 	}
 
@@ -334,7 +336,7 @@ impl VkDevice {
 }
 
 impl Drop for VkDevice {
-	fn drop(&mut self) { unsafe { self.handle.destroy_device(None); } }
+	fn drop(&mut self) { unsafe { self.handle.destroy_device(None); println!("device?") } }
 }
 
 impl VkCore {

@@ -16,10 +16,50 @@ use std::sync::Arc;
 
 pub fn run_kai(
 	device: Arc<VkDevice>,
+	queue: Arc<VkQueue<Graphics>>,
 	_events_loop: &mut EventsLoop,
 ) {
 	let alloc = mem_kai::alloc::BuddyAllocator::new(5, 0x100);
+	let memory = mem_kai::VkMemory::with_allocator(device.clone(), alloc, mem_kai::HostVisibleFlag)
+		.unwrap();
+	let buffer = mem_kai::VkBuffer::new(
+		memory.clone(),
+		queue.clone(),
+		mem_kai::alloc::BuddyAllocator::new(4, 0x10),
+		mem_kai::Vertex,
+	).unwrap();
 
+	let data = mem_kai::VkData::new(buffer.clone(), &31_u32).unwrap();
+	let mut access = data.access();
+	let uninit = access.as_ref().clone();
+	*access.as_mut() = 32;
+	let read = access.as_ref().clone();
+	drop(access);
+	println!("uninit: {}, init: {}", uninit, read);
+
+	let data = Arc::new(data);
+	let data2 = Arc::new(mem_kai::VkData::new(buffer.clone(), &(1_u32, 0_u32)).unwrap());
+	let handle = {
+		let data = data.clone();
+		let data2 = data2.clone();
+		std::thread::spawn(move || {
+			let mut access = data.access();
+			let mut access2 = data2.access();
+			*access.as_mut() = 64;
+			*access2.as_mut() = (2234, 111);
+		})
+	};
+
+	handle.join().unwrap();
+
+	let access = data.access();
+	let access2 = data2.access();
+	let read = access.as_ref().clone();
+	let read2 = access2.as_ref().clone();
+	drop(access);
+	drop(access2);
+
+	println!("changed by thread: {}, and 2: {:?}", read, read2);
 }
 
 

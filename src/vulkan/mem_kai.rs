@@ -197,7 +197,7 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperties {
 		device: Arc<VkDevice>,
 		allocator: A,
 		_memory_properties: P,
-	) -> Result<Self, MemoryErr> {
+	) -> Result<Arc<Self>, MemoryErr> {
 		let type_index = Self::compatible_memory_type_indices::<P>(&device)
 			.into_iter()
 			.next()
@@ -220,17 +220,17 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperties {
 		let mapping = Mutex::new(Arc::downgrade(&dummy_arc));
 		drop(dummy_arc);
 
-		Ok(
-			Self {
-				device,
-				handle,
-				type_index,
-				size: allocator.size(),
-				allocator: Mutex::new(allocator),
-				access: Mutex::new(MemoryAccess { count: 0, pointer: 0 }),
-				_properties: PhantomData,
-			}
-		)
+		let memory = Self {
+			device,
+			handle,
+			type_index,
+			size: allocator.size(),
+			allocator: Mutex::new(allocator),
+			access: Mutex::new(MemoryAccess { count: 0, pointer: 0 }),
+			_properties: PhantomData,
+		};
+
+		Ok(Arc::new(memory))
 	}
 
 	fn compatible_memory_type_indices<MP>(device: &Arc<VkDevice>) -> Vec<u32>
@@ -259,8 +259,9 @@ impl<A, P> Drop for VkMemory<A, P>
 
 		// Ensure that there is no cpu access to this memory.
 		debug_assert!(
-			self.access.lock().unwrap().count != 0,
-			"There is cpu access to this vk::DeviceMemory!",
+			self.access.lock().unwrap().count == 0,
+			"There is/are {} cpu access to this vk::DeviceMemory!",
+			self.access.lock().unwrap().count,
 		);
 	}
 }
@@ -280,7 +281,7 @@ impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 		queue: Arc<VkQueue<T>>,
 		allocator: BA,
 		_usage: U,
-	) -> Result<Self, BufferErr> where MA: Allocator {
+	) -> Result<Arc<Self>, BufferErr> where MA: Allocator {
 		let device = &memory.device.handle;
 		let handle = unsafe {
 			let info = vk::BufferCreateInfo {
@@ -314,15 +315,15 @@ impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 
 		unsafe { device.bind_buffer_memory(handle, memory.handle, range.start)? }
 
-		Ok(
-			Self {
-				memory,
-				identifier,
-				handle,
-				allocator: Mutex::new(allocator),
-				_usage: PhantomData,
-			}
-		)
+		let buffer = Self {
+			memory,
+			identifier,
+			handle,
+			allocator: Mutex::new(allocator),
+			_usage: PhantomData,
+		};
+
+		Ok(Arc::new(buffer))
 	}
 }
 
@@ -467,6 +468,10 @@ impl<MA, BA, P, U, D> Drop for VkDataAccess<'_, MA, BA, P, U, D>
 			unsafe {
 				self.data.buffer.memory.device.handle
 					.unmap_memory(self.data.buffer.memory.handle);
+			}
+
+			if cfg!(debug_assertions) {
+				println!("unmap memory!");
 			}
 		};
 	}
