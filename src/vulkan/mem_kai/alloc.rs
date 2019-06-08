@@ -2,20 +2,15 @@ use std::ops;
 use std::fmt;
 use std::alloc::Layout;
 
-pub trait VkAlloc {
-	fn alloc<T>() -> ops::Range<u64>;
-	fn alloc_unsized<T>(_t: &T) -> ops::Range<u64> where T: ?Sized;
-	fn dealloc<T>(t: T);
-}
 
-pub trait AllocationManager {
+pub trait Allocator {
 	type Identifier;
+	fn size(&self) -> u64;
 	fn alloc(&mut self, layout: Layout) -> Result<(ops::Range<u64>, Self::Identifier), AllocErr>;
-	fn dealloc(&mut self, id: Self::Identifier);
+	fn dealloc(&mut self, id: &Self::Identifier);
 }
 
-#[derive(Debug)]
-pub struct BuddyAllocManager {
+pub struct BuddyAllocator {
 	order: u32,
 	block_size: u64,
 	used: Vec<Vec<u32>>,
@@ -33,7 +28,7 @@ pub enum AllocErr {
 	OutOfHeap,
 }
 
-impl BuddyAllocManager {
+impl BuddyAllocator {
 	pub fn new(order: u32, block_size: u64) -> Self {
 		let used = (0..order)
 			.map(|order| Vec::with_capacity(2_usize.pow(order)))
@@ -45,15 +40,18 @@ impl BuddyAllocManager {
 
 		Self { order, block_size, used, unused }
 	}
-
-	pub fn size(&self) -> u64 { 2_u64.pow(self.order) * self.block_size }
 }
 
-impl AllocationManager for BuddyAllocManager {
+impl Allocator for BuddyAllocator {
 	type Identifier = BuddyAllocIdentifier;
 
+	fn size(&self) -> u64 { self.block_size * 2_u64.pow(self.order) }
+
 	/// TODO: check alignment.
-	fn alloc(&mut self, layout: Layout) -> Result<(ops::Range<u64>, Self::Identifier), AllocErr> {
+	fn alloc(
+		&mut self,
+		layout: Layout
+	) -> Result<(ops::Range<u64>, BuddyAllocIdentifier), AllocErr> {
 		let required_order = (0..self.order)
 			.try_for_each(|order| {
 				if layout.size() <= self.block_size as usize * 2_usize.pow(order) {
@@ -98,7 +96,7 @@ impl AllocationManager for BuddyAllocManager {
 		}
 	}
 
-	fn dealloc(&mut self, id: Self::Identifier) {
+	fn dealloc(&mut self, id: &BuddyAllocIdentifier) {
 		let order_index = id.order as usize;
 		let dealloc_position = self.used[order_index]
 			.iter()
@@ -125,7 +123,7 @@ impl AllocationManager for BuddyAllocManager {
 	}
 }
 
-impl fmt::Display for BuddyAllocManager {
+impl fmt::Display for BuddyAllocator {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		(0..self.order as usize)
 			.try_for_each(|order| {

@@ -4,6 +4,7 @@ use winit::*;
 use crate::vulkan::*;
 use crate::linear_algebra::*;
 use crate::interaction::*;
+use crate::vulkan::mem_kai;
 
 use std::mem;
 use std::ops;
@@ -11,6 +12,16 @@ use std::path::*;
 use std::io::Write;
 use std::error::Error;
 use std::time::SystemTime;
+use std::sync::Arc;
+
+pub fn run_kai(
+	device: Arc<VkDevice>,
+	_events_loop: &mut EventsLoop,
+) {
+	let alloc = mem_kai::alloc::BuddyAllocator::new(5, 0x100);
+
+}
+
 
 const GUI_SCALE: f32 = 200_f32;
 

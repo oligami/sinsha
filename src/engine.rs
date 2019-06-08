@@ -17,31 +17,11 @@ pub struct Engine;
 impl Engine {
 	pub fn run() {
 		let (window, mut events_loop) = Engine::create_window();
-		let vk_core = VkCore::new(&window);
-		let mut vk_graphic = VkGraphic::new(&vk_core);
+		let instance = VkInstance::new();
+		let surface = VkSurfaceKHR::new(instance.clone(), window);
+		let device = VkDevice::new_with_a_graphics_queue(instance, surface.clone(), 1.0);
 
-		if cfg!(debug_assertions) {
-			let memory_properties = vk_core.memory_properties();
-			memory_properties.memory_types
-				.iter()
-				.zip(0..memory_properties.memory_type_count)
-				.for_each(|(ty, i)| eprintln!(
-					"[memory (type {:2})] properties: {:?}, heap_index: {}",
-					i, ty.property_flags, ty.heap_index,
-				));
-			eprintln!();
-
-			memory_properties.memory_heaps
-				.iter()
-				.zip(0..memory_properties.memory_heap_count)
-				.for_each(|(heap, i)| eprintln!(
-					"[heap{}] size: {}, flags: {:?}",
-					i, heap.size, heap.flags,
-				));
-			eprintln!();
-		}
-
-		start_menu::run(&vk_core, &mut vk_graphic, &window, &mut events_loop);
+		start_menu::run_kai(&vk_core, &mut vk_graphic, &window, &mut events_loop);
 	}
 }
 

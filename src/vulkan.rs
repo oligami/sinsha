@@ -1,5 +1,5 @@
 mod mem;
-mod mem_kai;
+pub mod mem_kai;
 mod shaders;
 mod cmd_buf;
 
@@ -28,6 +28,7 @@ use std::ffi::CString;
 use std::default::Default;
 use std::marker::PhantomData;
 use std::ops::Range;
+use std::sync::Arc;
 
 pub struct PhysicalDevice {
 	pub raw_handle: vk::PhysicalDevice,
@@ -48,6 +49,41 @@ pub struct VkCore {
 	physical_device: PhysicalDevice,
 	surface: Surface,
 }
+
+pub struct VkInstance {
+	entry: Entry,
+	handle: Instance,
+	physical_devices: Vec<VkPhysicalDevice>,
+}
+
+pub struct VkPhysicalDevice {
+	handle: vk::PhysicalDevice,
+	memory_types: Vec<vk::MemoryType>,
+	memory_heaps: Vec<vk::MemoryHeap>,
+}
+
+pub struct VkSurfaceKHR {
+	loader: khr::Surface,
+	handle: vk::SurfaceKHR,
+	window: Window,
+}
+
+pub struct VkDevice {
+	instance: Arc<VkInstance>,
+	physical_device_index: usize,
+	handle: Device,
+}
+
+pub struct VkQueue<C> {
+	device: Arc<VkDevice>,
+	handle: vk::Queue,
+	family_index: u32,
+	_type: PhantomData<C>,
+}
+
+pub struct Graphics;
+pub struct Compute;
+pub struct Transfer;
 
 struct Swapchain {
 	loader: khr::Swapchain,
@@ -90,9 +126,215 @@ pub struct VkSemaphore<'vk_core> {
 	_marker: PhantomData<&'vk_core VkCore>,
 }
 
-impl PhysicalDevice {
-	pub fn queue_family_index_count(&self) -> u32 { 1 }
-	pub fn queue_family_index_ptr(&self) -> *const u32 { &self.queue_family_index as *const _ }
+
+impl VkInstance {
+	pub fn new() -> Arc<Self> {
+		let entry = Entry::new().unwrap();
+
+		let handle = {
+			let app_name = CString::new("sinsha").unwrap();
+			let engine_name = CString::new("No Engine").unwrap();
+			let app_info = vk::ApplicationInfo {
+				s_type: StructureType::APPLICATION_INFO,
+				p_next: ptr::null(),
+				p_application_name: app_name.as_ptr(),
+				application_version: vk_make_version!(0, 1, 0),
+				engine_version: vk_make_version!(0, 1, 0),
+				p_engine_name: engine_name.as_ptr(),
+				api_version: vk_make_version!(1, 1, 85),
+			};
+
+			let instance_extensions = instance_extensions();
+			let debug_layer = CString::new("VK_LAYER_LUNARG_standard_validation").unwrap();
+			let instance_layers = if cfg!(debug_assertions) {
+				vec![debug_layer.as_ptr()]
+			} else {
+				vec![]
+			};
+			let instance_info = vk::InstanceCreateInfo {
+				s_type: StructureType::INSTANCE_CREATE_INFO,
+				p_next: ptr::null(),
+				flags: vk::InstanceCreateFlags::empty(),
+				p_application_info: &app_info,
+				enabled_extension_count: instance_extensions.len() as u32,
+				pp_enabled_extension_names: instance_extensions.as_ptr(),
+				enabled_layer_count: instance_layers.len() as u32,
+				pp_enabled_layer_names: instance_layers.as_ptr(),
+			};
+
+			unsafe { entry.create_instance(&instance_info, None).unwrap() }
+		};
+
+		let physical_devices = {
+			unsafe { handle.enumerate_physical_devices().unwrap() }
+				.into_iter()
+				.map(|vk_physical_device| {
+					let memory_properties = unsafe {
+						handle.get_physical_device_memory_properties(vk_physical_device)
+					};
+
+					let memory_types = memory_properties
+						.memory_types[..memory_properties.memory_type_count as usize]
+						.to_vec();
+
+					let memory_heaps = memory_properties
+						.memory_heaps[..memory_properties.memory_heap_count as usize]
+						.to_vec();
+
+					VkPhysicalDevice { handle: vk_physical_device, memory_types, memory_heaps }
+				})
+				.collect()
+		};
+
+
+		Arc::new(Self { entry, handle, physical_devices })
+	}
+
+	fn extensions() -> Vec<*const i8> {
+		vec![
+			khr::Surface::name().as_ptr(),
+			khr::Win32Surface::name().as_ptr(),
+		]
+	}
+}
+
+impl Drop for VkInstance {
+	fn drop(&mut self) { unsafe { self.handle.destroy_instance(None); }}
+}
+
+impl VkSurfaceKHR {
+	pub fn new(instance: Arc<VkInstance>, window: Window) -> Arc<Self> {
+		let loader = khr::Surface::new(&instance.entry, &instance.handle);
+		let handle = unsafe { Self::handle(&instance.entry, &instance.handle, &window) };
+
+		Arc::new(Self { loader, handle, window })
+	}
+
+	#[cfg(target_os = "windows")]
+	unsafe fn handle(entry: &Entry, instance: &Instance, window: &winit::Window) -> vk::SurfaceKHR {
+		use winapi::um::libloaderapi::GetModuleHandleW;
+		use winit::os::windows::WindowExt;
+
+		let info = vk::Win32SurfaceCreateInfoKHR {
+			s_type: StructureType::WIN32_SURFACE_CREATE_INFO_KHR,
+			p_next: ptr::null(),
+			flags: vk::Win32SurfaceCreateFlagsKHR::empty(),
+			hwnd: window.get_hwnd() as *const _,
+			hinstance: GetModuleHandleW(ptr::null()) as *const _,
+		};
+
+		khr::Win32Surface::new(entry, instance)
+			.create_win32_surface(&info, None)
+			.unwrap()
+	}
+}
+
+impl Drop for VkSurfaceKHR {
+	fn drop(&mut self) { unsafe { self.loader.destroy_surface(self.handle, None) } }
+}
+
+impl VkDevice {
+	pub fn new_with_a_graphics_queue(
+		instance: Arc<VkInstance>,
+		surface: Arc<VkSurfaceKHR>,
+		queue_priority: f32,
+	) -> (Arc<Self>, Arc<VkQueue<Graphics>>) {
+		let (physical_device_index, queue_family_index) = instance.physical_devices
+			.iter()
+			.enumerate()
+			.try_fold((), |_, (i, physical_device)| {
+				let properties = unsafe {
+					instance.handle
+						.get_physical_device_queue_family_properties(physical_device.handle)
+				};
+
+				let queue_family_index = properties
+					.iter()
+					.position(|properties| {
+						let surface_support = unsafe {
+							surface.loader
+								.get_physical_device_surface_support(
+									physical_device.handle,
+									i as u32,
+									surface.handle,
+								)
+						};
+
+						let graphics_support = properties.queue_flags
+							.contains(vk::QueueFlags::GRAPHICS);
+
+						surface_support && graphics_support
+					});
+
+				match queue_family_index {
+					Some(index) => Err((index, i)),
+					None => Ok(()),
+				}
+			})
+			.err()
+			.unwrap();
+
+		let queue_info = vk::DeviceQueueCreateInfo {
+			s_type: StructureType::DEVICE_QUEUE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::DeviceQueueCreateFlags::empty(),
+			queue_family_index: queue_family_index as u32,
+			queue_count: 1,
+			p_queue_priorities: &queue_priority as *const _,
+		};
+
+		let extensions = Self::extensions();
+		let features = vk::PhysicalDeviceFeatures::default();
+		let device_info = vk::DeviceCreateInfo {
+			s_type: StructureType::DEVICE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::DeviceCreateFlags::empty(),
+			queue_create_info_count: 1,
+			p_queue_create_infos: &queue_info as *const _,
+			enabled_layer_count: 0,
+			pp_enabled_layer_names: ptr::null(),
+			enabled_extension_count: extensions.len() as u32,
+			pp_enabled_extension_names: extensions.as_ptr(),
+			p_enabled_features: &features as *const _,
+		};
+
+		let device = {
+			let handle = unsafe {
+				instance.handle
+					.create_device(
+						instance.physical_devices[physical_device_index].handle,
+						&device_info,
+						None
+					)
+					.unwrap()
+			};
+
+			Arc::new(Self { instance, physical_device_index, handle })
+		};
+
+		let queue = {
+			let handle = unsafe { device.handle.get_device_queue(queue_family_index as u32, 0) };
+
+			Arc::new(
+				VkQueue {
+					device: device.clone(),
+					family_index: queue_family_index as u32,
+					handle,
+					_type: PhantomData,
+				}
+			)
+		};
+
+		(device, queue)
+	}
+
+	fn extensions() -> Vec<*const i8> {
+		vec![khr::Swapchain::name().as_ptr()]
+	}
+}
+
+impl Drop for VkDevice {
+	fn drop(&mut self) { unsafe { self.handle.destroy_device(None); } }
 }
 
 impl VkCore {
@@ -225,8 +467,15 @@ impl VkCore {
 		unsafe { self.device.queue_wait_idle(self.queue) }
 	}
 
-	pub fn memory_properties(&self) -> vk::PhysicalDeviceMemoryProperties {
-		self.physical_device.memory_properties
+	pub fn memory_properties(&self) -> &[vk::MemoryType] {
+		&self
+			.physical_device
+			.memory_properties
+			.memory_types[0 .. self.physical_device.memory_properties.memory_type_count as usize]
+	}
+
+	pub fn queue_family_indices(&self) -> &[u32] {
+		std::slice::from_ref(&self.physical_device.queue_family_index)
 	}
 }
 
@@ -516,8 +765,8 @@ impl<'vk_core> VkGraphic<'vk_core> {
 				image_array_layers: 1,
 				image_usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
 				image_sharing_mode: vk::SharingMode::EXCLUSIVE,
-				queue_family_index_count: vk_core.physical_device.queue_family_index_count(),
-				p_queue_family_indices: vk_core.physical_device.queue_family_index_ptr(),
+				queue_family_index_count: vk_core.queue_family_indices().len() as u32,
+				p_queue_family_indices: vk_core.queue_family_indices().as_ptr(),
 				pre_transform: vk::SurfaceTransformFlagsKHR::IDENTITY,
 				composite_alpha: vk::CompositeAlphaFlagsKHR::OPAQUE,
 				present_mode: data.present_mode,

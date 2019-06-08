@@ -200,8 +200,6 @@ impl<'vk_core> VkBuffer<'vk_core> {
 		sharing_mode: vk::SharingMode,
 	) -> Result<Self, vk::Result> {
 		unsafe {
-			let physical_device = &vk_core.physical_device;
-
 			let raw_handle = vk_core.device
 				.create_buffer(
 					&vk::BufferCreateInfo {
@@ -211,8 +209,8 @@ impl<'vk_core> VkBuffer<'vk_core> {
 						size,
 						usage,
 						sharing_mode,
-						queue_family_index_count: physical_device.queue_family_index_count(),
-						p_queue_family_indices: physical_device.queue_family_index_ptr(),
+						queue_family_index_count: vk_core.queue_family_indices().len() as u32,
+						p_queue_family_indices: vk_core.queue_family_indices().as_ptr(),
 					},
 					None,
 				)?;
@@ -241,8 +239,6 @@ impl<'vk_core> VkImage<'vk_core> {
 		array_layers: u32,
 	) -> Result<Self, vk::Result> {
 		unsafe {
-			let physical_device = &vk_core.physical_device;
-
 			let raw_handle = vk_core.device
 				.create_image(
 					&vk::ImageCreateInfo {
@@ -259,8 +255,8 @@ impl<'vk_core> VkImage<'vk_core> {
 						image_type,
 						mip_levels,
 						array_layers,
-						queue_family_index_count: physical_device.queue_family_index_count(),
-						p_queue_family_indices: physical_device.queue_family_index_ptr(),
+						queue_family_index_count: vk_core.queue_family_indices().len() as u32,
+						p_queue_family_indices: vk_core.queue_family_indices().as_ptr(),
 					},
 					None,
 				)?;
