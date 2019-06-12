@@ -15,6 +15,7 @@ use std::time::SystemTime;
 use std::sync::Arc;
 
 pub fn run_kai(
+	surface: Arc<VkSurfaceKHR>,
 	device: Arc<VkDevice>,
 	queue: Arc<VkQueue<Graphics>>,
 	_events_loop: &mut EventsLoop,
@@ -22,14 +23,14 @@ pub fn run_kai(
 	let alloc = mem_kai::alloc::BuddyAllocator::new(5, 0x100);
 	let memory = mem_kai::VkMemory::with_allocator(device.clone(), alloc, mem_kai::HostVisibleFlag)
 		.unwrap();
-	let buffer = mem_kai::VkBuffer::new(
+	let buffer = mem_kai::buffer::VkBuffer::new(
 		memory.clone(),
 		queue.clone(),
 		mem_kai::alloc::BuddyAllocator::new(4, 0x10),
 		mem_kai::Vertex,
 	).unwrap();
 
-	let data = mem_kai::VkData::new(buffer.clone(), &31_u32).unwrap();
+	let data = mem_kai::buffer::VkData::new(buffer.clone(), &31_u32).unwrap();
 	let mut access = data.access();
 	let uninit = access.as_ref().clone();
 	*access.as_mut() = 32;
@@ -38,7 +39,7 @@ pub fn run_kai(
 	println!("uninit: {}, init: {}", uninit, read);
 
 	let data = Arc::new(data);
-	let data2 = Arc::new(mem_kai::VkData::new(buffer.clone(), &(1_u32, 0_u32)).unwrap());
+	let data2 = Arc::new(mem_kai::buffer::VkData::new(buffer.clone(), &(1_u32, 0_u32)).unwrap());
 	let handle = {
 		let data = data.clone();
 		let data2 = data2.clone();
@@ -60,6 +61,45 @@ pub fn run_kai(
 	drop(access2);
 
 	println!("changed by thread: {}, and 2: {:?}", read, read2);
+
+	use mem_kai::image::*;
+	let render_pass = render_pass::VkRenderPass::builder()
+		.color_attachment::<format::R8G8B8A8_UNORM, sample_count::Type1>(
+			vk::AttachmentLoadOp::CLEAR,
+			vk::AttachmentStoreOp::STORE,
+			vk::ImageLayout::UNDEFINED,
+			vk::ImageLayout::PRESENT_SRC_KHR,
+		)
+		.subpasses()
+		.subpass::<render_pass::subpass::Graphics>(
+			vec![
+				vk::AttachmentReference {
+					attachment: 0,
+					layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+				}
+			],
+			vec![],
+			None,
+			vec![],
+		)
+		.dependencies()
+		.dependency(
+			vk::SUBPASS_EXTERNAL,
+			0,
+			vk::AccessFlags::empty(),
+			vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+			vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+			vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+			vk::DependencyFlags::BY_REGION,
+		)
+		.build(device.clone());
+
+	swap_chain::VkSwapchainKHR::new::<format::R8G8B8A8_UNORM>(
+		device.clone(),
+		surface.clone(),
+		vk::PresentModeKHR::MAILBOX,
+		2,
+	);
 }
 
 

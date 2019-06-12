@@ -1,5 +1,9 @@
-mod mem;
 pub mod mem_kai;
+pub mod render_pass;
+pub mod swap_chain;
+pub mod framebuffer;
+
+mod mem;
 mod shaders;
 mod cmd_buf;
 
@@ -336,7 +340,7 @@ impl VkDevice {
 }
 
 impl Drop for VkDevice {
-	fn drop(&mut self) { unsafe { self.handle.destroy_device(None); println!("device?") } }
+	fn drop(&mut self) { unsafe { self.handle.destroy_device(None); } }
 }
 
 impl VkCore {
@@ -598,9 +602,9 @@ impl<'vk_core> VkGraphic<'vk_core> {
 					pipeline_bind_point: vk::PipelineBindPoint::GRAPHICS,
 					color_attachment_count: color_attachment_ref.len() as u32,
 					p_color_attachments: color_attachment_ref.as_ptr(),
+					p_resolve_attachments: ptr::null(),
 					input_attachment_count: 0,
 					p_input_attachments: ptr::null(),
-					p_resolve_attachments: ptr::null(),
 					p_depth_stencil_attachment: ptr::null(),
 					preserve_attachment_count: 0,
 					p_preserve_attachments: ptr::null(),
