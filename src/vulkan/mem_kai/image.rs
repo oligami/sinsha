@@ -2,6 +2,7 @@ pub mod usage;
 pub mod extent;
 pub mod format;
 pub mod sample_count;
+pub mod aspect;
 
 use super::*;
 
@@ -28,16 +29,18 @@ pub struct VkImage<E, F, S, U, A, P>
 	_sample_count: PhantomData<S>,
 }
 
-pub struct VkImageView<E, F, S, U, A, P>
-	where E: Extent,
+pub struct VkImageView<A, E, F, S, U, MA, P>
+	where A: Aspect,
+		  E: Extent,
 		  F: Format,
 		  S: SampleCount,
 		  U: ImageUsage,
-		  A: Allocator,
+		  MA: Allocator,
 		  P: MemoryProperties
 {
 	image: Arc<VkImage<E, F, S, U, A, P>>,
 	handle: vk::ImageView,
+	aspect: PhantomData<A>,
 }
 
 impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
