@@ -2,12 +2,11 @@ pub mod usage;
 pub mod extent;
 pub mod format;
 pub mod sample_count;
-pub mod aspect;
 
 use super::*;
 
 pub use usage::ImageUsage;
-pub use extent::Extent;
+pub use extent::{ Extent, ArrayLayers };
 pub use format::{ Format, DepthFormat, StencilFormat };
 pub use sample_count::SampleCount;
 
@@ -22,25 +21,25 @@ pub struct VkImage<E, F, S, U, A, P>
 	memory: Arc<VkMemory<A, P>>,
 	handle: vk::Image,
 	extent: E,
-	mip_levels: u32,
-	array_layers: u32,
-	_usage: PhantomData<U>,
 	_format: PhantomData<F>,
 	_sample_count: PhantomData<S>,
+	_usage: PhantomData<U>,
+	mip_levels: u32,
+	array_layers: u32,
 }
 
-pub struct VkImageView<A, E, F, S, U, MA, P>
-	where A: Aspect,
-		  E: Extent,
+// TODO: Image views of swap chain don't have memory. So A and P is no need.
+// TODO:  VkImage need P but VkImageView doesn't need P. (I think.)
+pub struct VkImageView<E, F, S, U, A, P>
+	where E: Extent,
 		  F: Format,
 		  S: SampleCount,
 		  U: ImageUsage,
-		  MA: Allocator,
+		  A: Allocator,
 		  P: MemoryProperties
 {
 	image: Arc<VkImage<E, F, S, U, A, P>>,
 	handle: vk::ImageView,
-	aspect: PhantomData<A>,
 }
 
 impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
@@ -51,18 +50,17 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 		  A: Allocator,
 		  P: MemoryProperties
 {
-	pub fn new(
-		memory: VkMemory<A, P>,
+	pub fn new<T>(
+		memory: Arc<VkMemory<A, P>>,
+		queue: Arc<VkQueue<T>>,
 		extent: E,
-		mip_levels: u32,
-		array_layers: u32,
-		_usage: U,
 		_format: F,
 		_sample_count: S,
+		_usage: U,
+		mip_levels: u32,
+		array_layers: u32,
 		initial_layout: vk::ImageLayout,
 	) -> Arc<Self> {
-		let queue_family_index = memory.device.physical_device_index as u32;
-
 		let info = vk::ImageCreateInfo {
 			s_type: StructureType::IMAGE_CREATE_INFO,
 			p_next: ptr::null(),
@@ -78,7 +76,7 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 			sharing_mode: vk::SharingMode::EXCLUSIVE,
 			tiling: vk::ImageTiling::OPTIMAL,
 			queue_family_index_count: 1,
-			p_queue_family_indices: &queue_family_index as *const _,
+			p_queue_family_indices: &queue.family_index as *const _,
 
 		};
 
@@ -122,19 +120,17 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 		image: Arc<VkImage<E, F, S, U, A, P>>,
 		aspect: vk::ImageAspectFlags,
 		mip_level_range: ops::Range<u32>,
-		array_layer_range: ops::Range<u32>,
+		array_layers: E::ArrayLayers,
 	) -> Arc<Self> {
-		// TODO: decide view_type by array_layer_range and F.
-		// ref: https://vulkan.lunarg.com/doc/view/1.0.26.0/linux/vkspec.chunked/ch11s05.html
-
 		// TODO: consider component mapping.
 
+		let (base_array_layer, layer_count) = array_layers.base_layer_and_count();
 		let info = vk::ImageViewCreateInfo {
 			s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::ImageViewCreateFlags::empty(),
 			image: image.handle,
-			view_type: unimplemented!(),
+			view_type: array_layers.view_type(),
 			format: F::format(),
 			components: vk::ComponentMapping {
 				r: vk::ComponentSwizzle::IDENTITY,
@@ -146,8 +142,8 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 				aspect_mask: aspect,
 				base_mip_level: mip_level_range.start,
 				level_count: mip_level_range.end - mip_level_range.start,
-				base_array_layer: array_layer_range.start,
-				layer_count: array_layer_range.end - array_layer_range.start,
+				base_array_layer,
+				layer_count,
 			},
 		};
 

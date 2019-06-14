@@ -2,14 +2,15 @@ pub mod alloc;
 pub mod buffer;
 pub mod image;
 
+pub use alloc::*;
+pub use buffer::*;
+pub use image::*;
+
 use ash::vk;
 use ash::vk::StructureType;
 use ash::version::DeviceV1_0;
 
 use crate::vulkan::*;
-
-use self::alloc::Allocator;
-use self::buffer::*;
 
 use std::io;
 use std::fs::File;
@@ -26,8 +27,8 @@ use std::sync::{ Arc, Mutex };
 use std::alloc::Layout;
 
 
-pub use self::memory_type::*;
-mod memory_type {
+pub use self::memory_type::MemoryProperties;
+pub mod memory_type {
 	use ash::vk::MemoryPropertyFlags as MP;
 
 	pub trait MemoryProperties {
@@ -58,45 +59,6 @@ mod memory_type {
 	}
 }
 
-pub use self::usage::*;
-mod usage {
-	use ash::vk::BufferUsageFlags as BU;
-
-	pub trait BufferUsage {
-		fn flags() -> BU;
-	}
-
-	pub trait ImageUsage {
-		fn flags() -> ash::vk::ImageUsageFlags;
-	}
-
-
-	pub struct Source;
-	pub struct Destination;
-	pub struct Vertex;
-	pub struct Index;
-	pub struct Uniform;
-
-	pub struct Sampled;
-	pub struct ColorAttach;
-	pub struct DepthStencilAttach;
-	pub struct TransientAttach;
-	pub struct InputAttach;
-
-	macro_rules! impl_buffer_usage {
-		($flag:ty, $bits:expr) => {
-			impl BufferUsage for $flag {
-				fn flags() -> BU { $bits }
-			}
-		};
-	}
-
-	impl_buffer_usage!(Source, BU::TRANSFER_SRC);
-	impl_buffer_usage!(Destination, BU::TRANSFER_DST);
-	impl_buffer_usage!(Vertex, BU::VERTEX_BUFFER);
-	impl_buffer_usage!(Index, BU::INDEX_BUFFER);
-}
-
 pub struct VkMemory<A, P> where A: Allocator, P: MemoryProperties {
 	device: Arc<VkDevice>,
 	handle: vk::DeviceMemory,
@@ -117,7 +79,6 @@ pub enum MemoryErr {
 	Vk(vk::Result),
 	NoValidMemoryTypeIndex,
 }
-
 
 
 impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperties {

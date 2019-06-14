@@ -1,4 +1,5 @@
 use super::*;
+use super::mem_kai::*;
 use super::mem_kai::image::*;
 
 pub struct VkSwapchainKHR<U, F> {
@@ -9,18 +10,21 @@ pub struct VkSwapchainKHR<U, F> {
 	color_space: vk::ColorSpaceKHR,
 	min_image_count: u32,
 	present_mode: vk::PresentModeKHR,
-	_usage: PhatomData<U>,
+	_usage: PhantomData<U>,
 	_format: PhantomData<F>,
 }
 
+/// This struct is dummy allocator.
+pub struct SwapchainAllocator;
+
 impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
-	pub fn new<U, F>(
+	pub fn new(
 		device: Arc<VkDevice>,
 		surface: Arc<VkSurfaceKHR>,
-		present_mode: vk::PresentModeKHR,
-		min_image_count: u32,
 		_usage: U,
 		_format: F,
+		present_mode: vk::PresentModeKHR,
+		min_image_count: u32,
 	) -> Arc<Self> {
 		let surface_capabilities = unsafe {
 			surface.loader
@@ -96,6 +100,14 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 		})
 	}
 
+
+	fn image_views(
+		&self
+	) -> Vec<image::VkImageView<extent::Extent2D, F, sample_count::Type1, U, A, memory_type::DeviceLocalFlag>>
+	{
+
+	}
+
 	unsafe fn recreate(self: Arc<Self>) -> Arc<Self> {
 		let surface_capabilities = unsafe {
 			self.surface.loader
@@ -134,7 +146,7 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 		let new_one = VkSwapchainKHR {
 			device: self.device.clone(),
 			surface: self.surface.clone(),
-			loader: self.loader,
+			loader: self.loader.clone(),
 			handle: new_handle,
 			min_image_count: self.min_image_count,
 			color_space: self.color_space,
@@ -143,10 +155,23 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 			_format: PhantomData,
 		};
 
-		unimplemented!()
+		unimplemented!();
+
+		Arc::new(new_one)
 	}
 }
 
 impl<U, F> Drop for VkSwapchainKHR<U, F> {
 	fn drop(&mut self) { unsafe { self.loader.destroy_swapchain(self.handle, None); } }
+}
+
+use std::alloc::Layout;
+use std::ops::Range;
+impl Allocator for SwapchainAllocator {
+	type Identifier = ();
+	fn size(&self) -> u64 { 0 }
+	fn alloc(&mut self, layout: Layout) -> Result<(Range<u64>, Self::Identifier), AllocErr> {
+		unreachable!()
+	}
+	fn dealloc(&mut self, id: &Self::Identifier) {  }
 }

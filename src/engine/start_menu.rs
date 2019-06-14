@@ -64,14 +64,17 @@ pub fn run_kai(
 
 	use mem_kai::image::*;
 	let render_pass = render_pass::VkRenderPass::builder()
-		.color_attachment::<format::R8G8B8A8_UNORM, sample_count::Type1>(
+		.color_attachment(
+			format::R8G8B8A8_UNORM,
+			sample_count::Type1,
 			vk::AttachmentLoadOp::CLEAR,
 			vk::AttachmentStoreOp::STORE,
 			vk::ImageLayout::UNDEFINED,
 			vk::ImageLayout::PRESENT_SRC_KHR,
 		)
 		.subpasses()
-		.subpass::<render_pass::subpass::Graphics>(
+		.subpass(
+			render_pass::subpass::Graphics,
 			vec![
 				vk::AttachmentReference {
 					attachment: 0,
@@ -94,9 +97,11 @@ pub fn run_kai(
 		)
 		.build(device.clone());
 
-	swap_chain::VkSwapchainKHR::new::<format::R8G8B8A8_UNORM>(
+	swap_chain::VkSwapchainKHR::new(
 		device.clone(),
 		surface.clone(),
+		usage::ColorAttachment,
+		format::B8G8R8_UNORM,
 		vk::PresentModeKHR::MAILBOX,
 		2,
 	);

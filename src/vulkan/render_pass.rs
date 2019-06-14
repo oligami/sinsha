@@ -67,6 +67,10 @@ impl VkRenderPass<(), ()> {
 		}
 	}
 }
+impl<A, S> VkRenderPass<A, S> {
+	#[inline]
+	pub fn device(&self) -> &Arc<VkDevice> { &self.device }
+}
 
 impl<A, S> Drop for VkRenderPass<A, S> {
 	fn drop(&mut self) {
