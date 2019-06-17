@@ -9,7 +9,6 @@ use crate::vulkan::mem_kai;
 use std::mem;
 use std::ops;
 use std::path::*;
-use std::io::Write;
 use std::error::Error;
 use std::time::SystemTime;
 use std::sync::Arc;
@@ -21,13 +20,17 @@ pub fn run_kai(
 	_events_loop: &mut EventsLoop,
 ) {
 	let alloc = mem_kai::alloc::BuddyAllocator::new(5, 0x100);
-	let memory = mem_kai::VkMemory::with_allocator(device.clone(), alloc, mem_kai::memory_type::HostVisibleFlag)
-		.unwrap();
+	let memory = mem_kai::VkMemory::with_allocator(
+		device.clone(),
+		alloc,
+		mem_kai::memory_property::HostVisibleFlag(mem_kai::memory_property::Empty),
+	).unwrap();
+
 	let buffer = mem_kai::buffer::VkBuffer::new(
 		memory.clone(),
 		queue.clone(),
 		mem_kai::alloc::BuddyAllocator::new(4, 0x10),
-		mem_kai::buffer::usage::TransferSrcFlag(mem_kai::buffer::usage::None),
+		mem_kai::buffer::usage::TransferSrcFlag(mem_kai::buffer::usage::Empty),
 	).unwrap();
 
 	let data = mem_kai::buffer::VkData::new(buffer.clone(), &31_u32).unwrap();
@@ -97,17 +100,17 @@ pub fn run_kai(
 		)
 		.build(device.clone());
 
-	let swapchain = swap_chain::VkSwapchainKHR::new(
+	let swapchain = swapchain::VkSwapchainKHR::new(
 		device.clone(),
 		surface.clone(),
-		usage::ColorAttachment,
+		usage::ColorAttachmentFlag(usage::Empty),
 		format::B8G8R8A8_UNORM,
 		vk::PresentModeKHR::MAILBOX,
 		2,
 	);
 
 	let extent = swapchain.extent();
-	let swapchain_image_views = swap_chain::VkSwapchainKHR::views(&swapchain);
+	let swapchain_image_views = swapchain::VkSwapchainKHR::views(&swapchain);
 
 	let framebuffers: Vec<_> = swapchain_image_views.iter()
 		.map(|view| {

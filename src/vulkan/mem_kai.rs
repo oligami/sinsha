@@ -1,10 +1,12 @@
 pub mod alloc;
 pub mod buffer;
 pub mod image;
+pub mod memory_property;
 
 pub use alloc::*;
 pub use buffer::*;
 pub use image::*;
+pub use memory_property::MemoryProperty;
 
 use ash::vk;
 use ash::vk::StructureType;
@@ -27,39 +29,7 @@ use std::sync::{ Arc, Mutex };
 use std::alloc::Layout;
 
 
-pub use self::memory_type::MemoryProperties;
-pub mod memory_type {
-	use ash::vk::MemoryPropertyFlags as MP;
-
-	pub trait MemoryProperties {
-		fn flags() -> MP;
-	}
-
-	pub struct DeviceLocalFlag;
-	pub struct HostVisibleFlag;
-	pub struct HostCoherentFlag;
-
-	macro_rules! impl_memory_properties {
-		($marker_struct:ty, $flag_bits:expr) => {
-			impl MemoryProperties for $marker_struct {
-				fn flags() -> MP { $flag_bits }
-			}
-		};
-	}
-
-	impl_memory_properties!(DeviceLocalFlag, MP::DEVICE_LOCAL);
-	impl_memory_properties!(HostVisibleFlag, MP::HOST_VISIBLE);
-	impl_memory_properties!(HostCoherentFlag, MP::HOST_COHERENT);
-
-	impl<T, U> MemoryProperties for (T, U)
-		where T: MemoryProperties,
-			  U: MemoryProperties
-	{
-		fn flags() -> MP { T::flags() | U::flags() }
-	}
-}
-
-pub struct VkMemory<A, P> where A: Allocator, P: MemoryProperties {
+pub struct VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 	device: Arc<VkDevice>,
 	handle: vk::DeviceMemory,
 	type_index: u32,
@@ -81,7 +51,7 @@ pub enum MemoryErr {
 }
 
 
-impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperties {
+impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 	pub fn with_allocator(
 		device: Arc<VkDevice>,
 		allocator: A,
@@ -123,7 +93,7 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperties {
 	}
 
 	fn compatible_memory_type_indices<MP>(device: &Arc<VkDevice>) -> Vec<u32>
-		where MP: MemoryProperties
+		where MP: MemoryProperty
 	{
 		let flags = MP::flags();
 		device.instance.physical_devices[device.physical_device_index]
@@ -141,7 +111,7 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperties {
 
 impl<A, P> Drop for VkMemory<A, P>
 	where A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	fn drop(&mut self) {
 		unsafe { self.device.handle.free_memory(self.handle, None) }

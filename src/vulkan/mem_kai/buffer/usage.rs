@@ -1,107 +1,368 @@
+//! Implemented traits are below.
+//! TransferSrcFlag
+//! TransferDstFlag
+//! UniformTexelBufferFlag
+//! StorageTexelBufferFlag
+//! UniformBufferFlag
+//! StorageBufferFlag
+//! IndexBufferFlag
+//! VertexBufferFlag
+//! IndirectBufferFlag
+//! TransformFeedbackBufferExtFlag
+//! TransformFeedbackCounterBufferExtFlag
+//! ConditionalRenderingExtFlag
+//! RayTracingNvFlag
+//! ShaderDeviceAddressExtFlag
+//!
+//! Each trait represents each flag below.
+//! TRANSFER_SRC
+//! TRANSFER_DST
+//! UNIFORM_TEXEL_BUFFER
+//! STORAGE_TEXEL_BUFFER
+//! UNIFORM_BUFFER
+//! STORAGE_BUFFER
+//! INDEX_BUFFER
+//! VERTEX_BUFFER
+//! INDIRECT_BUFFER
+//! TRANSFORM_FEEDBACK_BUFFER_EXT
+//! TRANSFORM_FEEDBACK_COUNTER_BUFFER_EXT
+//! CONDITIONAL_RENDERING_EXT
+//! RAY_TRACING_NV
+//! SHADER_DEVICE_ADDRESS_EXT
+
+
 use ash::vk::BufferUsageFlags;
 
 pub trait BufferUsage {
 	fn flags() -> BufferUsageFlags;
 }
 
-pub struct None;
-pub struct TransferSrcFlag<U>(pub U) where U: BufferUsage;
-pub struct TransferDstFlag<U>(pub U) where U: BufferUsage;
-pub struct UniformTexelBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct StorageTexelBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct UniformBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct StorageBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct IndexBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct VertexBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct IndirectBufferFlag<U>(pub U) where U: BufferUsage;
-pub struct TransformFeedbackBufferExtFlag<U>(pub U) where U: BufferUsage;
-pub struct TransformFeedbackCounterBufferExtFlag<U>(pub U) where U: BufferUsage;
-pub struct ConditionalRenderingExtFlag<U>(pub U) where U: BufferUsage;
-pub struct RayTracingNvFlag<U>(pub U) where U: BufferUsage;
-pub struct ShaderDeviceAddressExtFlag<U>(pub U) where U: BufferUsage;
-
-pub trait TransferSrc: BufferUsage {}
-pub trait TransferDst: BufferUsage {}
-pub trait UniformTexelBuffer: BufferUsage {}
-pub trait StorageTexelBuffer: BufferUsage {}
-pub trait UniformBuffer: BufferUsage {}
-pub trait StorageBuffer: BufferUsage {}
-pub trait IndexBuffer: BufferUsage {}
-pub trait VertexBuffer: BufferUsage {}
-pub trait IndirectBuffer: BufferUsage {}
-pub trait TransformFeedbackBufferExt: BufferUsage {}
-pub trait TransformFeedbackCounterBufferExt: BufferUsage {}
-pub trait ConditionalRenderingExt: BufferUsage {}
-pub trait RayTracingNv: BufferUsage {}
-pub trait ShaderDeviceAddressExt: BufferUsage {}
-
-pub trait NoTransferSrc: BufferUsage {}
-pub trait NoTransferDst: BufferUsage {}
-pub trait NoUniformTexelBuffer: BufferUsage {}
-pub trait NoStorageTexelBuffer: BufferUsage {}
-pub trait NoUniformBuffer: BufferUsage {}
-pub trait NoStorageBuffer: BufferUsage {}
-pub trait NoIndexBuffer: BufferUsage {}
-pub trait NoVertexBuffer: BufferUsage {}
-pub trait NoIndirectBuffer: BufferUsage {}
-pub trait NoTransformFeedbackBufferExt: BufferUsage {}
-pub trait NoTransformFeedbackCounterBufferExt: BufferUsage {}
-pub trait NoConditionalRenderingExt: BufferUsage {}
-pub trait NoRayTracingNv: BufferUsage {}
-pub trait NoShaderDeviceAddressExt: BufferUsage {}
-
-impl BufferUsage for None {
+pub struct Empty;
+impl BufferUsage for Empty {
 	fn flags() -> BufferUsageFlags { BufferUsageFlags::empty() }
 }
 
 macro_rules! impl_buffer_usage {
-	($($flag_struct:ident, $flag:ident,)*) => {
-		$(impl<U> BufferUsage for $flag_struct<U> where U: BufferUsage {
-			fn flags() -> BufferUsageFlags { BufferUsageFlags::$flag | U::flags() }
-		})*
+	($($usage_flag:ident, $flag:ident,)*) => {
+		$(
+			pub struct $usage_flag<U>(pub U) where U: BufferUsage;
+
+			impl<U> BufferUsage for $usage_flag<U> where U: BufferUsage {
+				fn flags() -> BufferUsageFlags { BufferUsageFlags::$flag | U::flags() }
+			}
+		)*
 	};
 }
 
 impl_buffer_usage!(
 	TransferSrcFlag, TRANSFER_SRC,
 	TransferDstFlag, TRANSFER_DST,
+	UniformTexelBufferFlag, UNIFORM_TEXEL_BUFFER,
+	StorageTexelBufferFlag, STORAGE_TEXEL_BUFFER,
+	UniformBufferFlag, UNIFORM_BUFFER,
+	StorageBufferFlag, STORAGE_BUFFER,
+	IndexBufferFlag, INDEX_BUFFER,
+	VertexBufferFlag, VERTEX_BUFFER,
+	IndirectBufferFlag, INDIRECT_BUFFER,
+	TransformFeedbackBufferExtFlag, TRANSFORM_FEEDBACK_BUFFER_EXT,
+	TransformFeedbackCounterBufferExtFlag, TRANSFORM_FEEDBACK_COUNTER_BUFFER_EXT,
+	ConditionalRenderingExtFlag, CONDITIONAL_RENDERING_EXT,
+	RayTracingNvFlag, RAY_TRACING_NV,
+	ShaderDeviceAddressExtFlag, SHADER_DEVICE_ADDRESS_EXT,
 );
-
-
-macro_rules! impl_no_trait_for_none {
-	($($no_trait:ident,)*) => { $(impl $no_trait for None {})* };
-}
-impl_no_trait_for_none!(
-	NoTransferSrc,
-	NoTransferDst,
-);
-
-macro_rules! impl_no_trait {
-	($no_trait:ident, $($other_flag:ident,)*) => {
-		$(impl<U> $no_trait for $other_flag<U> where U: $no_trait {})*
-	};
-}
-impl_no_trait!(NoTransferSrc, TransferDstFlag,);
 
 macro_rules! impl_usage_trait {
-	($usage_trait:ident, $flag:ident, $no_trait:ident, $($other_flag:ident,)*) => {
-		impl<U> $usage_trait for $flag<U> where U: $no_trait {}
+	($usage_flag:ident, $usage_trait:ident, $not_trait:ident, $($other_flag:ident,)*) => {
+		pub trait $usage_trait: BufferUsage {}
+		pub trait $not_trait: BufferUsage {}
+
+		impl<U> $usage_trait for $usage_flag<U> where U: $not_trait {}
 		$(impl<U> $usage_trait for $other_flag<U> where U: $usage_trait {})*
+
+		impl $not_trait for Empty {}
+		$(impl<U> $not_trait for $other_flag<U> where U: $not_trait {})*
 	};
 }
-impl_usage_trait!(TransferSrc, TransferSrcFlag, NoTransferSrc, TransferDstFlag,);
 
-// TRANSFER_SRC
-// TRANSFER_DST
-// UNIFORM_TEXEL_BUFFER
-// STORAGE_TEXEL_BUFFER
-// UNIFORM_BUFFER
-// STORAGE_BUFFER
-// INDEX_BUFFER
-// VERTEX_BUFFER
-// INDIRECT_BUFFER
-// TRANSFORM_FEEDBACK_BUFFER_EXT
-// TRANSFORM_FEEDBACK_COUNTER_BUFFER_EXT
-// CONDITIONAL_RENDERING_EXT
-// RAY_TRACING_NV
-// SHADER_DEVICE_ADDRESS_EXT
+
+impl_usage_trait!(
+	TransferSrcFlag,
+	TransferSrc,
+	NotTransferSrc,
+		// TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	TransferDstFlag,
+	TransferDst,
+	NotTransferDst,
+		TransferSrcFlag,
+		// TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	UniformTexelBufferFlag,
+	UniformTexelBuffer,
+	NotUniformTexelBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		// UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	StorageTexelBufferFlag,
+	StorageTexelBuffer,
+	NotStorageTexelBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		// StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	UniformBufferFlag,
+	UniformBuffer,
+	NotUniformBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		// UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	StorageBufferFlag,
+	StorageBuffer,
+	NotStorageBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		// StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	IndexBufferFlag,
+	IndexBuffer,
+	NotIndexBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		// IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	VertexBufferFlag,
+	VertexBuffer,
+	NotVertexBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		// VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	IndirectBufferFlag,
+	IndirectBuffer,
+	NotIndirectBuffer,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		// IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	TransformFeedbackBufferExtFlag,
+	TransformFeedbackBufferExt,
+	NotTransformFeedbackBufferExt,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		// TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	TransformFeedbackCounterBufferExtFlag,
+	TransformFeedbackCounterBufferExt,
+	NotTransformFeedbackCounterBufferExt,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		// TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	ConditionalRenderingExtFlag,
+	ConditionalRenderingExt,
+	NotConditionalRenderingExt,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		// ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	RayTracingNvFlag,
+	RayTracingNv,
+	NotRayTracingNv,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		// RayTracingNvFlag,
+		ShaderDeviceAddressExtFlag,
+);
+
+impl_usage_trait!(
+	ShaderDeviceAddressExtFlag,
+	ShaderDeviceAddressExt,
+	NotShaderDeviceAddressExt,
+		TransferSrcFlag,
+		TransferDstFlag,
+		UniformTexelBufferFlag,
+		StorageTexelBufferFlag,
+		UniformBufferFlag,
+		StorageBufferFlag,
+		IndexBufferFlag,
+		VertexBufferFlag,
+		IndirectBufferFlag,
+		TransformFeedbackBufferExtFlag,
+		TransformFeedbackCounterBufferExtFlag,
+		ConditionalRenderingExtFlag,
+		RayTracingNvFlag,
+		// ShaderDeviceAddressExtFlag,
+);
+
+

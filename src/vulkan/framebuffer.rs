@@ -2,7 +2,7 @@ use super::*;
 use super::mem_kai::*;
 use super::mem_kai::image::*;
 use super::render_pass::{ VkRenderPass, VkAttachment };
-use super::swap_chain::VkSwapchainImageView;
+use super::swapchain::VkSwapchainImageView;
 
 pub struct VkFrameBuffer<V, A, S> {
 	handle: vk::Framebuffer,
@@ -57,7 +57,7 @@ impl<V, H, A> VkFrameBufferBuilder<V, H, A> {
 			  S: SampleCount,
 			  U: image::ImageUsage,
 			  MA: Allocator,
-			  P: MemoryProperties,
+			  P: MemoryProperty,
 	{
 		self.info.attachment_count += 1;
 

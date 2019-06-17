@@ -1,6 +1,6 @@
 pub mod mem_kai;
 pub mod render_pass;
-pub mod swap_chain;
+pub mod swapchain;
 pub mod framebuffer;
 
 mod mem;

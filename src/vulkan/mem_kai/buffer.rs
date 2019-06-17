@@ -6,7 +6,7 @@ use super::*;
 pub struct VkBuffer<MA, BA, P, U>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage
 {
 	memory: Arc<VkMemory<MA, P>>,
@@ -19,7 +19,7 @@ pub struct VkBuffer<MA, BA, P, U>
 pub struct VkData<MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
@@ -32,7 +32,7 @@ pub struct VkData<MA, BA, P, U, D>
 pub struct VkDataAccess<'vk_data, MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
@@ -56,7 +56,7 @@ pub enum DataErr {
 impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage
 {
 	pub fn new<T>(
@@ -113,7 +113,7 @@ impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 impl<MA, BA, P, U> Drop for VkBuffer<MA, BA, P, U>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage
 {
 	fn drop(&mut self) {
@@ -133,7 +133,7 @@ impl From<alloc::AllocErr> for BufferErr {
 impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
@@ -148,7 +148,7 @@ impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 	}
 
 	// TODO: set flag bound (memory properties must contain HostVisible)
-	pub fn access(&self) -> VkDataAccess<MA, BA, P, U, D> {
+	pub fn access(&self) -> VkDataAccess<MA, BA, P, U, D> where P: memory_property::HostVisible {
 		let mut access_lock = self.buffer.memory.access.lock().unwrap();
 		let memory_pointer = if access_lock.count != 0 {
 			access_lock.count += 1;
@@ -179,7 +179,7 @@ impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 impl<MA, BA, P, U, D> Drop for VkData<MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
@@ -193,7 +193,7 @@ impl From<alloc::AllocErr> for DataErr {
 impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: Sized,
 {
@@ -211,7 +211,7 @@ impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, D>
 impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, [D]>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 {
 	/// NOTE: AsRef trait may be better.
@@ -238,7 +238,7 @@ impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, [D]>
 impl<MA, BA, P, U, D> Drop for VkDataAccess<'_, MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
-		  P: MemoryProperties,
+		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {

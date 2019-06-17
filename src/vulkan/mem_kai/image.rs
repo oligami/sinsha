@@ -16,7 +16,7 @@ pub struct VkImage<E, F, S, U, A, P>
 		  S: SampleCount,
 		  U: ImageUsage,
 		  A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	memory: Arc<VkMemory<A, P>>,
 	handle: vk::Image,
@@ -36,7 +36,7 @@ pub struct VkImageView<E, F, S, U, A, P>
 		  S: SampleCount,
 		  U: ImageUsage,
 		  A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	image: Arc<VkImage<E, F, S, U, A, P>>,
 	handle: vk::ImageView,
@@ -50,7 +50,7 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 		  S: SampleCount,
 		  U: ImageUsage,
 		  A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	pub fn new<T>(
 		memory: Arc<VkMemory<A, P>>,
@@ -108,7 +108,7 @@ impl<E, F, S, U, A, P> Drop for VkImage<E, F, S, U, A, P>
 		  S: SampleCount,
 		  U: ImageUsage,
 		  A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	fn drop(&mut self) { unsafe { self.memory.device.handle.destroy_image(self.handle, None); } }
 }
@@ -119,7 +119,7 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 		  S: SampleCount,
 		  U: ImageUsage,
 		  A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	pub fn new(
 		image: Arc<VkImage<E, F, S, U, A, P>>,
@@ -175,7 +175,7 @@ impl<E, F, S, U, A, P> Drop for VkImageView<E, F, S, U, A, P>
 		  S: SampleCount,
 		  U: ImageUsage,
 		  A: Allocator,
-		  P: MemoryProperties
+		  P: MemoryProperty
 {
 	fn drop(&mut self) {
 		unsafe { self.image.memory.device.handle.destroy_image_view(self.handle, None); }
