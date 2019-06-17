@@ -70,6 +70,9 @@ impl VkRenderPass<(), ()> {
 impl<A, S> VkRenderPass<A, S> {
 	#[inline]
 	pub fn device(&self) -> &Arc<VkDevice> { &self.device }
+
+	#[inline]
+	pub fn handle(&self) -> vk::RenderPass { self.handle }
 }
 
 impl<A, S> Drop for VkRenderPass<A, S> {

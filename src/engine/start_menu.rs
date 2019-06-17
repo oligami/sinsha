@@ -21,13 +21,13 @@ pub fn run_kai(
 	_events_loop: &mut EventsLoop,
 ) {
 	let alloc = mem_kai::alloc::BuddyAllocator::new(5, 0x100);
-	let memory = mem_kai::VkMemory::with_allocator(device.clone(), alloc, mem_kai::HostVisibleFlag)
+	let memory = mem_kai::VkMemory::with_allocator(device.clone(), alloc, mem_kai::memory_type::HostVisibleFlag)
 		.unwrap();
 	let buffer = mem_kai::buffer::VkBuffer::new(
 		memory.clone(),
 		queue.clone(),
 		mem_kai::alloc::BuddyAllocator::new(4, 0x10),
-		mem_kai::Vertex,
+		mem_kai::buffer::usage::TransferSrcFlag(mem_kai::buffer::usage::None),
 	).unwrap();
 
 	let data = mem_kai::buffer::VkData::new(buffer.clone(), &31_u32).unwrap();
@@ -65,7 +65,7 @@ pub fn run_kai(
 	use mem_kai::image::*;
 	let render_pass = render_pass::VkRenderPass::builder()
 		.color_attachment(
-			format::R8G8B8A8_UNORM,
+			format::B8G8R8A8_UNORM,
 			sample_count::Type1,
 			vk::AttachmentLoadOp::CLEAR,
 			vk::AttachmentStoreOp::STORE,
@@ -97,14 +97,25 @@ pub fn run_kai(
 		)
 		.build(device.clone());
 
-	swap_chain::VkSwapchainKHR::new(
+	let swapchain = swap_chain::VkSwapchainKHR::new(
 		device.clone(),
 		surface.clone(),
 		usage::ColorAttachment,
-		format::B8G8R8_UNORM,
+		format::B8G8R8A8_UNORM,
 		vk::PresentModeKHR::MAILBOX,
 		2,
 	);
+
+	let extent = swapchain.extent();
+	let swapchain_image_views = swap_chain::VkSwapchainKHR::views(&swapchain);
+
+	let framebuffers: Vec<_> = swapchain_image_views.iter()
+		.map(|view| {
+			framebuffer::VkFrameBuffer::builder(extent.width, extent.height, 1)
+				.attach_swapchain_image_view(view.clone())
+				.build(render_pass.clone())
+		})
+		.collect();
 }
 
 

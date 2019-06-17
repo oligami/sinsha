@@ -1,7 +1,8 @@
 use super::*;
 use super::mem_kai::*;
 use super::mem_kai::image::*;
-use super::render_pass::VkRenderPass;
+use super::render_pass::{ VkRenderPass, VkAttachment };
+use super::swap_chain::VkSwapchainImageView;
 
 pub struct VkFrameBuffer<V, A, S> {
 	handle: vk::Framebuffer,
@@ -9,14 +10,15 @@ pub struct VkFrameBuffer<V, A, S> {
 	image_views: V,
 }
 
-pub struct VkFrameBufferBuilder<V, A> {
+pub struct VkFrameBufferBuilder<V, H, A> {
 	info: vk::FramebufferCreateInfo,
 	image_views: V,
+	handles: H,
 	_attachments: PhantomData<A>,
 }
 
 impl VkFrameBuffer<(), (), ()> {
-	fn builder() -> VkFrameBufferBuilder<(), ()> {
+	pub fn builder(width: u32, height: u32, layers: u32) -> VkFrameBufferBuilder<(), (), ()> {
 		VkFrameBufferBuilder {
 			info: vk::FramebufferCreateInfo {
 				s_type: StructureType::FRAMEBUFFER_CREATE_INFO,
@@ -25,23 +27,33 @@ impl VkFrameBuffer<(), (), ()> {
 				render_pass: vk::RenderPass::null(),
 				attachment_count: 0,
 				p_attachments: ptr::null(),
-				width: 0,
-				height: 0,
-				layers: 1,
+				width,
+				height,
+				layers,
 			},
 			image_views: (),
+			handles: (),
 			_attachments: PhantomData,
 		}
 	}
 }
 
-impl<V, A> VkFrameBufferBuilder<V, A> {
-	fn attach_image_view<E, F, S, U, MA, P>(
+impl<V, A, S> Drop for VkFrameBuffer<V, A, S> {
+	fn drop(&mut self) {
+		unsafe { self.render_pass.device().handle.destroy_framebuffer(self.handle, None); }
+	}
+}
+
+impl<V, H, A> VkFrameBufferBuilder<V, H, A> {
+	pub fn attach_image_view<F, S, U, MA, P>(
 		mut self,
-		image_view: image::VkImageView<E, F, S, U, MA, P>,
-	) -> VkFrameBufferBuilder<(V, image::VkImageView<E, F, S, U, MA, P>), (A, (F, S))>
-		where E: Extent,
-			  F: Format,
+		image_view: Arc<image::VkImageView<extent::Extent2D, F, S, U, MA, P>>,
+	) -> VkFrameBufferBuilder<
+		(V, Arc<image::VkImageView<extent::Extent2D, F, S, U, MA, P>>),
+		(H, vk::ImageView),
+		(A, VkAttachment<F, S>)
+	>
+		where F: Format,
 			  S: SampleCount,
 			  U: image::ImageUsage,
 			  MA: Allocator,
@@ -49,18 +61,53 @@ impl<V, A> VkFrameBufferBuilder<V, A> {
 	{
 		self.info.attachment_count += 1;
 
-		// TODO: Check width, height, layers.
+		debug_assert_eq!(self.info.width, image_view.image().extent().width);
+		debug_assert_eq!(self.info.height, image_view.image().extent().height);
 
+		let layers = {
+			let range = image_view.layer_range();
+			range.end - range.start
+		};
+		debug_assert_eq!(self.info.layers, layers);
+
+		let handle = image_view.handle();
 		VkFrameBufferBuilder {
 			info: self.info,
 			image_views: (self.image_views, image_view),
+			handles: (self.handles, handle),
 			_attachments: PhantomData,
 		}
 	}
 
-	fn build<S>(mut self, render_pass: Arc<VkRenderPass<A, S>>) -> Arc<VkFrameBuffer<V, A, S>> {
-		// TODO: Check whether this is valid alignment or not.
-		self.info.p_attachments = &self.image_views as *const _ as *const _;
+	pub fn attach_swapchain_image_view<F, U>(
+		mut self,
+		image_view: Arc<VkSwapchainImageView<F, U>>,
+	) -> VkFrameBufferBuilder<
+		(V, Arc<VkSwapchainImageView<F, U>>),
+		(H, vk::ImageView),
+		(A, VkAttachment<F, sample_count::Type1>)
+	> where F: Format, U: image::ImageUsage
+	{
+		self.info.attachment_count += 1;
+
+		debug_assert_eq!(self.info.width, image_view.extent().width);
+		debug_assert_eq!(self.info.height, image_view.extent().height);
+		debug_assert_eq!(self.info.layers, 1);
+
+		let handle = image_view.handle();
+
+		VkFrameBufferBuilder {
+			info: self.info,
+			image_views: (self.image_views, image_view),
+			handles: (self.handles, handle),
+			_attachments: PhantomData,
+		}
+	}
+
+	// this builder must have more than one attachment because A is same as A of VkRenderPass.
+	pub fn build<S>(mut self, render_pass: Arc<VkRenderPass<A, S>>) -> Arc<VkFrameBuffer<V, A, S>> {
+		self.info.p_attachments = &self.handles as *const _ as *const _;
+		self.info.render_pass = render_pass.handle();
 
 		let handle = unsafe {
 			render_pass.device().handle.create_framebuffer(&self.info, None).unwrap()

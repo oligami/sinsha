@@ -2,11 +2,15 @@ use super::*;
 use super::mem_kai::*;
 use super::mem_kai::image::*;
 
-pub struct VkSwapchainKHR<U, F> {
+use std::ops::Range;
+
+pub struct VkSwapchainKHR<F, U> where F: Format, U: ImageUsage {
 	device: Arc<VkDevice>,
 	surface: Arc<VkSurfaceKHR>,
 	loader: khr::Swapchain,
 	handle: vk::SwapchainKHR,
+	images: Vec<vk::Image>,
+	extent: extent::Extent2D,
 	color_space: vk::ColorSpaceKHR,
 	min_image_count: u32,
 	present_mode: vk::PresentModeKHR,
@@ -14,10 +18,12 @@ pub struct VkSwapchainKHR<U, F> {
 	_format: PhantomData<F>,
 }
 
-/// This struct is dummy allocator.
-pub struct SwapchainAllocator;
+pub struct VkSwapchainImageView<F, U> where F: Format, U: ImageUsage {
+	swapchain: Arc<VkSwapchainKHR<F, U>>,
+	handle: vk::ImageView,
+}
 
-impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
+impl<F, U> VkSwapchainKHR<F, U> where U: ImageUsage, F: Format {
 	pub fn new(
 		device: Arc<VkDevice>,
 		surface: Arc<VkSurfaceKHR>,
@@ -55,8 +61,21 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 
 		let surface_format = surface_formats
 			.iter()
+			.inspect(|f| println!("format: {:?}", f))
 			.find(|f| f.format == F::format())
 			.unwrap();
+
+		unsafe {
+			surface.loader
+				.get_physical_device_surface_present_modes(
+					surface.instance.physical_devices[device.physical_device_index].handle,
+					surface.handle,
+				)
+				.unwrap()
+				.iter()
+				.find(|mode| **mode == present_mode)
+				.unwrap()
+		};
 
 		let info = vk::SwapchainCreateInfoKHR {
 			s_type: StructureType::SWAPCHAIN_CREATE_INFO_KHR,
@@ -87,11 +106,15 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 				.unwrap()
 		};
 
+		let images = unsafe { loader.get_swapchain_images(handle).unwrap() };
+
 		Arc::new(Self {
 			device,
 			surface,
 			loader,
 			handle,
+			images,
+			extent: extent::Extent2D { width: window_extent.width, height: window_extent.height },
 			color_space: surface_format.color_space,
 			min_image_count,
 			present_mode,
@@ -101,21 +124,50 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 	}
 
 
-	fn image_views(
-		&self
-	) -> Vec<image::VkImageView<extent::Extent2D, F, sample_count::Type1, U, A, memory_type::DeviceLocalFlag>>
-	{
+	// NOTE: Multiple mip levels and array layers maybe need in the future.
+	pub fn views(swapchain: &Arc<Self>) -> Vec<Arc<VkSwapchainImageView<F, U>>> {
+		swapchain.images.iter()
+			.map(|image| {
+				let info = vk::ImageViewCreateInfo {
+					s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
+					p_next: ptr::null(),
+					flags: vk::ImageViewCreateFlags::empty(),
+					image: *image,
+					view_type: vk::ImageViewType::TYPE_2D,
+					format: F::format(),
+					components: vk::ComponentMapping {
+						r: vk::ComponentSwizzle::IDENTITY,
+						g: vk::ComponentSwizzle::IDENTITY,
+						b: vk::ComponentSwizzle::IDENTITY,
+						a: vk::ComponentSwizzle::IDENTITY,
+					},
+					subresource_range: vk::ImageSubresourceRange {
+						aspect_mask: vk::ImageAspectFlags::COLOR,
+						base_mip_level: 0,
+						level_count: 1,
+						base_array_layer: 0,
+						layer_count: 1,
+					},
+				};
 
+				let handle = unsafe {
+					swapchain.device.handle.create_image_view(&info, None).unwrap()
+				};
+
+				Arc::new(VkSwapchainImageView { swapchain: swapchain.clone(), handle })
+			})
+			.collect()
 	}
 
-	unsafe fn recreate(self: Arc<Self>) -> Arc<Self> {
-		let surface_capabilities = unsafe {
+	pub unsafe fn recreate(self: Arc<Self>) -> Arc<Self> {
+		let extent = unsafe {
 			self.surface.loader
 				.get_physical_device_surface_capabilities(
 					self.device.instance.physical_devices[self.device.physical_device_index].handle,
 					self.surface.handle,
 				)
 				.unwrap()
+				.current_extent
 		};
 
 		let info = vk::SwapchainCreateInfoKHR {
@@ -126,7 +178,7 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 			min_image_count: self.min_image_count,
 			image_format: F::format(),
 			image_color_space: self.color_space,
-			image_extent: surface_capabilities.current_extent,
+			image_extent: extent,
 			image_array_layers: 1,
 			image_usage: U::flags(),
 			image_sharing_mode: vk::SharingMode::EXCLUSIVE,
@@ -143,11 +195,15 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 
 		let new_handle = unsafe { self.loader.create_swapchain(&info, None).unwrap() };
 
+		let new_images = unsafe { self.loader.get_swapchain_images(new_handle).unwrap() };
+
 		let new_one = VkSwapchainKHR {
 			device: self.device.clone(),
 			surface: self.surface.clone(),
 			loader: self.loader.clone(),
 			handle: new_handle,
+			images: new_images,
+			extent: extent::Extent2D { width: extent.width, height: extent.height },
 			min_image_count: self.min_image_count,
 			color_space: self.color_space,
 			present_mode: self.present_mode,
@@ -155,23 +211,29 @@ impl<U, F> VkSwapchainKHR<U, F> where U: ImageUsage, F: Format {
 			_format: PhantomData,
 		};
 
+
+		// TODO: consider old swapchains remained by Arc.
 		unimplemented!();
 
 		Arc::new(new_one)
 	}
+
+	pub fn extent(&self) -> &extent::Extent2D { &self.extent }
 }
 
-impl<U, F> Drop for VkSwapchainKHR<U, F> {
+impl<F, U> Drop for VkSwapchainKHR<F, U> where F: Format, U: image::ImageUsage {
 	fn drop(&mut self) { unsafe { self.loader.destroy_swapchain(self.handle, None); } }
 }
 
-use std::alloc::Layout;
-use std::ops::Range;
-impl Allocator for SwapchainAllocator {
-	type Identifier = ();
-	fn size(&self) -> u64 { 0 }
-	fn alloc(&mut self, layout: Layout) -> Result<(Range<u64>, Self::Identifier), AllocErr> {
-		unreachable!()
+impl<F, U> VkSwapchainImageView<F, U> where F: Format, U: image::ImageUsage {
+	#[inline]
+	pub fn handle(&self) -> vk::ImageView { self.handle }
+	#[inline]
+	pub fn extent(&self) -> &extent::Extent2D { &self.swapchain.extent }
+}
+
+impl<F, U> Drop for VkSwapchainImageView<F, U> where F: Format, U: image::ImageUsage {
+	fn drop(&mut self) {
+		unsafe { self.swapchain.device.handle.destroy_image_view(self.handle, None); }
 	}
-	fn dealloc(&mut self, id: &Self::Identifier) {  }
 }

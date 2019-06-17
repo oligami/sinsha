@@ -29,7 +29,7 @@ pub struct VkImage<E, F, S, U, A, P>
 }
 
 // TODO: Image views of swap chain don't have memory. So A and P is no need.
-// TODO:  VkImage need P but VkImageView doesn't need P. (I think.)
+// TODO: VkImage need P but VkImageView doesn't need P. (I think.)
 pub struct VkImageView<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
@@ -40,6 +40,8 @@ pub struct VkImageView<E, F, S, U, A, P>
 {
 	image: Arc<VkImage<E, F, S, U, A, P>>,
 	handle: vk::ImageView,
+	mip_range: ops::Range<u32>,
+	layer_range: ops::Range<u32>,
 }
 
 impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
@@ -95,6 +97,9 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 			}
 		)
 	}
+
+	#[inline]
+	pub fn extent(&self) -> &E { &self.extent }
 }
 
 impl<E, F, S, U, A, P> Drop for VkImage<E, F, S, U, A, P>
@@ -119,18 +124,18 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 	pub fn new(
 		image: Arc<VkImage<E, F, S, U, A, P>>,
 		aspect: vk::ImageAspectFlags,
-		mip_level_range: ops::Range<u32>,
-		array_layers: E::ArrayLayers,
+		mip_range: ops::Range<u32>,
+		layer_range: E::ArrayLayers,
 	) -> Arc<Self> {
 		// TODO: consider component mapping.
 
-		let (base_array_layer, layer_count) = array_layers.base_layer_and_count();
+		let (base_array_layer, layer_count) = layer_range.base_layer_and_count();
 		let info = vk::ImageViewCreateInfo {
 			s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::ImageViewCreateFlags::empty(),
 			image: image.handle,
-			view_type: array_layers.view_type(),
+			view_type: layer_range.view_type(),
 			format: F::format(),
 			components: vk::ComponentMapping {
 				r: vk::ComponentSwizzle::IDENTITY,
@@ -140,8 +145,8 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 			},
 			subresource_range: vk::ImageSubresourceRange {
 				aspect_mask: aspect,
-				base_mip_level: mip_level_range.start,
-				level_count: mip_level_range.end - mip_level_range.start,
+				base_mip_level: mip_range.start,
+				level_count: mip_range.end - mip_range.start,
 				base_array_layer,
 				layer_count,
 			},
@@ -151,8 +156,17 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 			image.memory.device.handle.create_image_view(&info, None).unwrap()
 		};
 
-		Arc::new(Self { image, handle })
+		Arc::new(Self { image, handle, mip_range, layer_range: layer_range.layer_range() })
 	}
+
+	#[inline]
+	pub fn handle(&self) -> vk::ImageView { self.handle }
+
+	#[inline]
+	pub fn image(&self) -> &Arc<VkImage<E, F, S, U, A, P>> { &self.image }
+
+	#[inline]
+	pub fn layer_range(&self) -> &ops::Range<u32> { &self.layer_range }
 }
 
 impl<E, F, S, U, A, P> Drop for VkImageView<E, F, S, U, A, P>

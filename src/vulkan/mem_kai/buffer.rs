@@ -1,3 +1,6 @@
+pub mod usage;
+use usage::BufferUsage;
+
 use super::*;
 
 pub struct VkBuffer<MA, BA, P, U>

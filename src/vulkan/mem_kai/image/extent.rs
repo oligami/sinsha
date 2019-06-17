@@ -1,5 +1,7 @@
 use ash::vk;
 
+use std::ops::Range;
+
 /// Enumerations of ArrayLayers is created by referencing this.
 /// Table 7 in https://vulkan.lunarg.com/doc/view/latest/windows/apispec.html#_vkimageviewcreateinfo3
 pub trait Extent {
@@ -11,21 +13,22 @@ pub trait Extent {
 pub trait ArrayLayers {
 	fn view_type(&self) -> vk::ImageViewType;
 	fn base_layer_and_count(&self) -> (u32, u32);
+	fn layer_range(&self) -> Range<u32>;
 }
 
 pub struct Extent1D {
-	width: u32,
+	pub width: u32,
 }
 
 pub struct Extent2D {
-	width: u32,
-	height: u32,
+	pub width: u32,
+	pub height: u32,
 }
 
 pub struct Extent3D {
-	width: u32,
-	height: u32,
-	depth: u32,
+	pub width: u32,
+	pub height: u32,
+	pub depth: u32,
 }
 
 pub enum ArrayLayers1D {
@@ -90,6 +93,13 @@ impl ArrayLayers for ArrayLayers1D {
 			ArrayLayers1D::Array { base, layer_count } => (*base, *layer_count),
 		}
 	}
+
+	fn layer_range(&self) -> Range<u32> {
+		match self {
+			ArrayLayers1D::Normal { base } => *base .. *base + 1,
+			ArrayLayers1D::Array { base, layer_count } => *base .. *base + *layer_count,
+		}
+	}
 }
 impl ArrayLayers for ArrayLayers2D {
 	fn view_type(&self) -> vk::ImageViewType {
@@ -109,8 +119,18 @@ impl ArrayLayers for ArrayLayers2D {
 			ArrayLayers2D::CubeArray { base, cube_count } => (*base, *cube_count * 6),
 		}
 	}
+
+	fn layer_range(&self) -> Range<u32> {
+		match self {
+			ArrayLayers2D::Normal { base } => *base .. *base + 1,
+			ArrayLayers2D::Array { base, layer_count } => *base .. *base + *layer_count,
+			ArrayLayers2D::Cube { base } => *base .. *base + 6,
+			ArrayLayers2D::CubeArray { base, cube_count } => *base .. * base + *cube_count * 6,
+		}
+	}
 }
 impl ArrayLayers for ArrayLayers3D {
 	fn view_type(&self) -> vk::ImageViewType { vk::ImageViewType::TYPE_3D }
 	fn base_layer_and_count(&self) -> (u32, u32) { (0, 1) }
+	fn layer_range(&self) -> Range<u32> { 0..1 }
 }
