@@ -28,7 +28,6 @@ pub struct VkImage<E, F, S, U, A, P>
 	array_layers: u32,
 }
 
-// TODO: Image views of swap chain don't have memory. So A and P is no need.
 // TODO: VkImage need P but VkImageView doesn't need P. (I think.)
 pub struct VkImageView<E, F, S, U, A, P>
 	where E: Extent,
@@ -67,11 +66,11 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 			s_type: StructureType::IMAGE_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::ImageCreateFlags::empty(),
-			usage: U::flags(),
+			usage: U::image_usage(),
 			format: F::format(),
 			image_type: E::image_type(),
 			extent: extent.extent(),
-			samples: S::flags(),
+			samples: S::sample_count(),
 			mip_levels,
 			array_layers,
 			initial_layout,

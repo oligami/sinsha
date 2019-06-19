@@ -73,7 +73,7 @@ impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 				flags: vk::BufferCreateFlags::empty(),
 				size: allocator.size(),
 				sharing_mode: vk::SharingMode::EXCLUSIVE,
-				usage: U::flags(),
+				usage: U::buffer_usage(),
 				queue_family_index_count: 1,
 				p_queue_family_indices: &queue.family_index as *const _,
 			};

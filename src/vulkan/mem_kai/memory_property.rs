@@ -18,12 +18,12 @@
 use ash::vk::MemoryPropertyFlags;
 
 pub trait MemoryProperty {
-	fn flags() -> MemoryPropertyFlags;
+	fn memory_property() -> MemoryPropertyFlags;
 }
 
 pub struct Empty;
 impl MemoryProperty for Empty {
-	fn flags() -> MemoryPropertyFlags { MemoryPropertyFlags::empty() }
+	fn memory_property() -> MemoryPropertyFlags { MemoryPropertyFlags::empty() }
 }
 
 macro_rules! impl_memory_property {
@@ -32,7 +32,9 @@ macro_rules! impl_memory_property {
 			pub struct $property_flag<P>(pub P) where P: MemoryProperty;
 
 			impl<P> MemoryProperty for $property_flag<P> where P: MemoryProperty {
-				fn flags() -> MemoryPropertyFlags { MemoryPropertyFlags::$flag | P::flags() }
+				fn memory_property() -> MemoryPropertyFlags {
+					MemoryPropertyFlags::$flag | P::memory_property()
+				}
 			}
 		)*
 	};

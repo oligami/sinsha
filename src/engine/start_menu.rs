@@ -30,7 +30,7 @@ pub fn run_kai(
 		memory.clone(),
 		queue.clone(),
 		mem_kai::alloc::BuddyAllocator::new(4, 0x10),
-		mem_kai::buffer::usage::TransferSrcFlag(mem_kai::buffer::usage::Empty),
+		mem_kai::buffer::usage::VertexBufferFlag(mem_kai::buffer::usage::Empty),
 	).unwrap();
 
 	let data = mem_kai::buffer::VkData::new(buffer.clone(), &31_u32).unwrap();
@@ -119,6 +119,24 @@ pub fn run_kai(
 				.build(render_pass.clone())
 		})
 		.collect();
+
+	let descriptor_set_layout = shader::descriptor::VkDescriptorSetLayout::builder()
+		.binding(
+			shader::descriptor::ty::CombinedImageSampler,
+			1,
+			shader::stage::Fragment(shader::stage::Empty),
+		)
+		.build(device.clone());
+
+	let descriptor_pool = shader::descriptor::VkDescriptorPool::builder()
+		.layout(descriptor_set_layout.clone())
+		.pool_size()
+		.build(3, device.clone());
+
+	let descriptor_sets = shader::descriptor::VkDescriptorSet::new(
+		&[descriptor_set_layout.clone()],
+		descriptor_pool.clone(),
+	);
 }
 
 

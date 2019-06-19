@@ -95,7 +95,7 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 	fn compatible_memory_type_indices<MP>(device: &Arc<VkDevice>) -> Vec<u32>
 		where MP: MemoryProperty
 	{
-		let flags = MP::flags();
+		let flags = MP::memory_property();
 		device.instance.physical_devices[device.physical_device_index]
 			.memory_types
 			.iter()

@@ -25,12 +25,12 @@
 
 use ash::vk::ImageUsageFlags;
 pub trait ImageUsage {
-	fn flags() -> ImageUsageFlags;
+	fn image_usage() -> ImageUsageFlags;
 }
 
 pub struct Empty;
 impl ImageUsage for Empty {
-	fn flags() -> ImageUsageFlags { ImageUsageFlags::empty() }
+	fn image_usage() -> ImageUsageFlags { ImageUsageFlags::empty() }
 }
 
 macro_rules! impl_image_usage {
@@ -39,7 +39,7 @@ macro_rules! impl_image_usage {
 			pub struct $usage_flag<U>(pub U) where U: ImageUsage;
 
 			impl<U> ImageUsage for $usage_flag<U> where U: ImageUsage {
-				fn flags() -> ImageUsageFlags { ImageUsageFlags::$flag | U::flags() }
+				fn image_usage() -> ImageUsageFlags { ImageUsageFlags::$flag | U::image_usage() }
 			}
 		)*
 	};

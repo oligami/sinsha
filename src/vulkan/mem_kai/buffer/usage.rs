@@ -34,12 +34,12 @@
 use ash::vk::BufferUsageFlags;
 
 pub trait BufferUsage {
-	fn flags() -> BufferUsageFlags;
+	fn buffer_usage() -> BufferUsageFlags;
 }
 
 pub struct Empty;
 impl BufferUsage for Empty {
-	fn flags() -> BufferUsageFlags { BufferUsageFlags::empty() }
+	fn buffer_usage() -> BufferUsageFlags { BufferUsageFlags::empty() }
 }
 
 macro_rules! impl_buffer_usage {
@@ -48,7 +48,9 @@ macro_rules! impl_buffer_usage {
 			pub struct $usage_flag<U>(pub U) where U: BufferUsage;
 
 			impl<U> BufferUsage for $usage_flag<U> where U: BufferUsage {
-				fn flags() -> BufferUsageFlags { BufferUsageFlags::$flag | U::flags() }
+				fn buffer_usage() -> BufferUsageFlags {
+					BufferUsageFlags::$flag | U::buffer_usage()
+				}
 			}
 		)*
 	};

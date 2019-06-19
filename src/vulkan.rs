@@ -2,6 +2,7 @@ pub mod mem_kai;
 pub mod render_pass;
 pub mod swapchain;
 pub mod framebuffer;
+pub mod shader;
 
 mod mem;
 mod shaders;

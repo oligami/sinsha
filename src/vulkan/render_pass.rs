@@ -97,7 +97,7 @@ impl<A> VkRenderPassBuilderAttachments<A> {
 		let description = vk::AttachmentDescription {
 			flags: vk::AttachmentDescriptionFlags::empty(),
 			format: F::format(),
-			samples: S::flags(),
+			samples: S::sample_count(),
 			load_op,
 			store_op,
 			stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
@@ -131,7 +131,7 @@ impl<A> VkRenderPassBuilderAttachments<A> {
 		let description = vk::AttachmentDescription {
 			flags: vk::AttachmentDescriptionFlags::empty(),
 			format: F::format(),
-			samples: S::flags(),
+			samples: S::sample_count(),
 			load_op,
 			store_op,
 			stencil_load_op,
@@ -163,7 +163,7 @@ impl<A> VkRenderPassBuilderAttachments<A> {
 		let description = vk::AttachmentDescription {
 			flags: vk::AttachmentDescriptionFlags::empty(),
 			format: F::format(),
-			samples: S::flags(),
+			samples: S::sample_count(),
 			load_op: vk::AttachmentLoadOp::DONT_CARE,
 			store_op: vk::AttachmentStoreOp::DONT_CARE,
 			stencil_load_op: load_op,

@@ -1,6 +1,6 @@
 use ash::vk::SampleCountFlags;
 pub trait SampleCount {
-	fn flags() -> SampleCountFlags;
+	fn sample_count() -> SampleCountFlags;
 }
 
 macro_rules! impl_sample_count {
@@ -8,7 +8,7 @@ macro_rules! impl_sample_count {
 			$(
 				pub struct $sample_count;
 				impl SampleCount for $sample_count {
-					fn flags() -> SampleCountFlags { $flag }
+					fn sample_count() -> SampleCountFlags { $flag }
 				}
 			)*
 		}
