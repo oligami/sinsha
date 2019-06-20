@@ -137,6 +137,12 @@ pub fn run_kai(
 		&[descriptor_set_layout.clone()],
 		descriptor_pool.clone(),
 	);
+
+	let pipeline_layout = shader::pipeline::VkPipelineLayout::builder()
+		.push_constant::<RGBA, _>(shader::stage::Vertex(shader::stage::Empty))
+		.descriptor_set_layout()
+		.set_layout(descriptor_set_layout.clone())
+		.build(device.clone());
 }
 
 

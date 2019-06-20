@@ -1,23 +1,23 @@
 use ash::vk::ShaderStageFlags;
 
-pub trait ShaderStage {
-	fn shader_stage() -> ShaderStageFlags;
+pub trait ShaderStages {
+	fn shader_stages() -> ShaderStageFlags;
 }
 
 #[derive(Copy, Clone)]
 pub struct Empty;
-impl ShaderStage for Empty {
-	fn shader_stage() -> ShaderStageFlags { ShaderStageFlags::empty() }
+impl ShaderStages for Empty {
+	fn shader_stages() -> ShaderStageFlags { ShaderStageFlags::empty() }
 }
 
 macro_rules! impl_shader_stage {
 	($($name:ident, $flag:ident,)*) => {
 		$(
 			#[derive(Copy, Clone)]
-			pub struct $name<S>(pub S) where S: ShaderStage;
-			impl<S> ShaderStage for $name<S> where S: ShaderStage {
-				fn shader_stage() -> ShaderStageFlags {
-					ShaderStageFlags::$flag | S::shader_stage()
+			pub struct $name<S>(pub S) where S: ShaderStages;
+			impl<S> ShaderStages for $name<S> where S: ShaderStages {
+				fn shader_stages() -> ShaderStageFlags {
+					ShaderStageFlags::$flag | S::shader_stages()
 				}
 			}
 		)*

@@ -4,7 +4,7 @@ use super::*;
 
 pub use ty::DescriptorType;
 
-use stage::ShaderStage;
+use stage::ShaderStages;
 
 pub struct VkDescriptorSetLayout<L> {
 	device: Arc<VkDevice>,
@@ -48,6 +48,13 @@ impl VkDescriptorSetLayout<()> {
 	}
 }
 
+impl<L> VkDescriptorSetLayout<L> {
+	#[inline]
+	pub fn handle(&self) -> vk::DescriptorSetLayout { self.handle }
+	#[inline]
+	pub fn layout(&self) -> L where L: Copy { self.layout }
+}
+
 impl<L> Drop for VkDescriptorSetLayout<L> {
 	fn drop(&mut self) {
 		unsafe { self.device.handle.destroy_descriptor_set_layout(self.handle, None); }
@@ -61,13 +68,13 @@ impl<B, L> VkDescriptorSetLayoutBuilder<B, L> {
 		descriptor_count: u32,
 		shader_stages: S
 	) -> VkDescriptorSetLayoutBuilder<(B, vk::DescriptorSetLayoutBinding), (L, (D, u32, S))>
-		where D: DescriptorType, S: ShaderStage
+		where D: DescriptorType, S: ShaderStages
 	{
 		let binding = vk::DescriptorSetLayoutBinding {
 			binding: self.binding_index,
 			descriptor_type: D::descriptor_type(),
 			descriptor_count,
-			stage_flags: S::shader_stage(),
+			stage_flags: S::shader_stages(),
 			p_immutable_samplers: ptr::null(),
 		};
 
@@ -136,7 +143,7 @@ impl<P> VkDescriptorPoolBuilder<P, ()> {
 }
 
 impl<P, L, D, S> VkDescriptorPoolBuilder<P, (L, (D, u32, S))>
-	where D: DescriptorType, S: ShaderStage,
+	where D: DescriptorType, S: ShaderStages,
 {
 	pub fn pool_size(self) -> VkDescriptorPoolBuilder<(P, vk::DescriptorPoolSize), L> {
 		let pool_size = vk::DescriptorPoolSize {
