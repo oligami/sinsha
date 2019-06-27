@@ -61,7 +61,7 @@ impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 {
 	pub fn new<T>(
 		memory: Arc<VkMemory<MA, P>>,
-		queue: Arc<VkQueue<T>>,
+		queue: Arc<Queue<T>>,
 		allocator: BA,
 		_usage: U,
 	) -> Result<Arc<Self>, BufferErr> where MA: Allocator {
@@ -147,7 +147,6 @@ impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 		Ok(Self { buffer, identifier, range, _type: PhantomData })
 	}
 
-	// TODO: set flag bound (memory properties must contain HostVisible)
 	pub fn access(&self) -> VkDataAccess<MA, BA, P, U, D> where P: memory_property::HostVisible {
 		let mut access_lock = self.buffer.memory.access.lock().unwrap();
 		let memory_pointer = if access_lock.count != 0 {

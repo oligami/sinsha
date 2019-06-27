@@ -3,7 +3,7 @@ use super::mem_kai::image::*;
 
 
 pub struct VkRenderPass<A, S> {
-	device: Arc<VkDevice>,
+	device: Arc<Device>,
 	handle: vk::RenderPass,
 	// A: (VkAttachments<C, D>, .. ); maybe array
 	attachments: PhantomData<A>,
@@ -69,7 +69,7 @@ impl VkRenderPass<(), ()> {
 }
 impl<A, S> VkRenderPass<A, S> {
 	#[inline]
-	pub fn device(&self) -> &Arc<VkDevice> { &self.device }
+	pub fn device(&self) -> &Arc<Device> { &self.device }
 
 	#[inline]
 	pub fn handle(&self) -> vk::RenderPass { self.handle }
@@ -320,7 +320,7 @@ impl<A, S> VkRenderPassBuilderDependencies<A, S> {
 		self
 	}
 
-	pub fn build(self, device: Arc<VkDevice>) -> Arc<VkRenderPass<A, S>> {
+	pub fn build(self, device: Arc<Device>) -> Arc<VkRenderPass<A, S>> {
 		let info = vk::RenderPassCreateInfo {
 			s_type: StructureType::RENDER_PASS_CREATE_INFO,
 			p_next: ptr::null(),

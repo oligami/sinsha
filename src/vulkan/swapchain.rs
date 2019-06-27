@@ -5,8 +5,8 @@ use super::mem_kai::image::*;
 use std::ops::Range;
 
 pub struct VkSwapchainKHR<F, U> where F: Format, U: ImageUsage {
-	device: Arc<VkDevice>,
-	surface: Arc<VkSurfaceKHR>,
+	device: Arc<Device>,
+	surface: Arc<SurfaceKHR>,
 	loader: khr::Swapchain,
 	handle: vk::SwapchainKHR,
 	images: Vec<vk::Image>,
@@ -25,8 +25,8 @@ pub struct VkSwapchainImageView<F, U> where F: Format, U: ImageUsage {
 
 impl<F, U> VkSwapchainKHR<F, U> where U: ImageUsage, F: Format {
 	pub fn new(
-		device: Arc<VkDevice>,
-		surface: Arc<VkSurfaceKHR>,
+		device: Arc<Device>,
+		surface: Arc<SurfaceKHR>,
 		_usage: U,
 		_format: F,
 		present_mode: vk::PresentModeKHR,

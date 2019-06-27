@@ -53,7 +53,7 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 {
 	pub fn new<T>(
 		memory: Arc<VkMemory<A, P>>,
-		queue: Arc<VkQueue<T>>,
+		queue: Arc<Queue<T>>,
 		extent: E,
 		_format: F,
 		_sample_count: S,

@@ -30,7 +30,7 @@ use std::alloc::Layout;
 
 
 pub struct VkMemory<A, P> where A: Allocator, P: MemoryProperty {
-	device: Arc<VkDevice>,
+	device: Arc<Device>,
 	handle: vk::DeviceMemory,
 	type_index: u32,
 	allocator: Mutex<A>,
@@ -53,7 +53,7 @@ pub enum MemoryErr {
 
 impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 	pub fn with_allocator(
-		device: Arc<VkDevice>,
+		device: Arc<Device>,
 		allocator: A,
 		_memory_properties: P,
 	) -> Result<Arc<Self>, MemoryErr> {
@@ -92,7 +92,7 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 		Ok(Arc::new(memory))
 	}
 
-	fn compatible_memory_type_indices<MP>(device: &Arc<VkDevice>) -> Vec<u32>
+	fn compatible_memory_type_indices<MP>(device: &Arc<Device>) -> Vec<u32>
 		where MP: MemoryProperty
 	{
 		let flags = MP::memory_property();

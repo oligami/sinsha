@@ -7,7 +7,7 @@ pub use ty::DescriptorType;
 use stage::ShaderStages;
 
 pub struct VkDescriptorSetLayout<L> {
-	device: Arc<VkDevice>,
+	device: Arc<Device>,
 	handle: vk::DescriptorSetLayout,
 	layout: L,
 }
@@ -20,7 +20,7 @@ pub struct VkDescriptorSetLayoutBuilder<B, L> {
 }
 
 pub struct VkDescriptorPool {
-	device: Arc<VkDevice>,
+	device: Arc<Device>,
 	handle: vk::DescriptorPool,
 }
 
@@ -100,7 +100,7 @@ impl<B, L> VkDescriptorSetLayoutBuilder<B, L> {
 }
 
 impl<B1, B2, L> VkDescriptorSetLayoutBuilder<(B1, B2), L> {
-	pub fn build(self, device: Arc<VkDevice>) -> Arc<VkDescriptorSetLayout<L>> {
+	pub fn build(self, device: Arc<Device>) -> Arc<VkDescriptorSetLayout<L>> {
 		let info = vk::DescriptorSetLayoutCreateInfo {
 			s_type: StructureType::DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 			p_next: ptr::null(),
@@ -160,7 +160,7 @@ impl<P, L, D, S> VkDescriptorPoolBuilder<P, (L, (D, u32, S))>
 }
 
 impl<P1, P2> VkDescriptorPoolBuilder<(P1, P2), ()> {
-	pub fn build(self, max_sets: u32, device: Arc<VkDevice>) -> Arc<VkDescriptorPool> {
+	pub fn build(self, max_sets: u32, device: Arc<Device>) -> Arc<VkDescriptorPool> {
 		let info = vk::DescriptorPoolCreateInfo {
 			s_type: StructureType::DESCRIPTOR_POOL_CREATE_INFO,
 			p_next: ptr::null(),

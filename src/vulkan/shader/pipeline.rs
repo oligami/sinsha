@@ -5,7 +5,7 @@ use super::stage::ShaderStages;
 use super::descriptor::VkDescriptorSetLayout;
 
 pub struct VkPipelineLayout<P, L> {
-	device: Arc<VkDevice>,
+	device: Arc<Device>,
 	handle: vk::PipelineLayout,
 	push_constants: P,
 	set_layouts: L,
@@ -25,6 +25,77 @@ pub struct VkPipelineLayoutBuilderSetLayout<R, P, H, L> {
 	set_layout_count: u32,
 	set_layout_handles: H,
 	set_layouts: L,
+}
+
+pub struct VkPipeline<P, L, V, S, D> {
+	handle: vk::Pipeline,
+	layout: VkPipelineLayout<P, L>,
+	vertex_type: PhantomData<V>,
+	specialization_constants: S,
+	dynamic_states: D,
+}
+
+pub struct VkPipelineBuilderShaderModules<S> {
+	shader_modules: S
+}
+pub struct VkPipelineBuilderInput<S, V> {
+	shader_modules: S,
+	vertex: V,
+}
+pub struct VkPipelineBuilderInputAssembly<S, V> {
+	shader_modules: S,
+	vertex: V,
+	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+}
+pub struct VkPipelineBuilderTessellation<S, V> {
+	shader_modules: S,
+	vertex: V,
+	tessellation: vk::PipelineTessellationStateCreateInfo,
+}
+pub struct VkPipelineBuilderViewport<S, V> {
+	shader_modules: S,
+	vertex: V,
+	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+	tessellation: vk::PipelineTessellationStateCreateInfo,
+	viewport: vk::PipelineViewportStateCreateInfo,
+}
+pub struct VkPipelineBuilderRasterization<S, V> {
+	shader_modules: S,
+	vertex: V,
+	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+	tessellation: vk::PipelineTessellationStateCreateInfo,
+	viewport: vk::PipelineViewportStateCreateInfo,
+	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
+}
+pub struct VkPipelineBuilderMultisample<S, V> {
+	shader_modules: S,
+	vertex: V,
+	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+	tessellation: vk::PipelineTessellationStateCreateInfo,
+	viewport: vk::PipelineViewportStateCreateInfo,
+	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
+	multisample: vk::PipelineMultisampleStateCreateInfo,
+}
+pub struct VkPipelineBuilderDepthStencil<S, V> {
+	shader_modules: S,
+	vertex: V,
+	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+	tessellation: vk::PipelineTessellationStateCreateInfo,
+	viewport: vk::PipelineViewportStateCreateInfo,
+	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
+	multisample: vk::PipelineMultisampleStateCreateInfo,
+	depth_stencil: vk::PipelineDepthStencilStateCreateInfo,
+}
+pub struct VkPipelineBuilderColorBlend<S, V> {
+	shader_modules: S,
+	vertex: V,
+	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
+	tessellation: vk::PipelineTessellationStateCreateInfo,
+	viewport: vk::PipelineViewportStateCreateInfo,
+	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
+	multisample: vk::PipelineMultisampleStateCreateInfo,
+	depth_stencil: vk::PipelineDepthStencilStateCreateInfo,
+	color_blend: vk::PipelineColorBlendStateCreateInfo,
 }
 
 impl VkPipelineLayout<(), ()> {
@@ -95,7 +166,7 @@ impl<R, P, H, L> VkPipelineLayoutBuilderSetLayout<R, P, H, L> {
 		}
 	}
 
-	pub fn build(self, device: Arc<VkDevice>) -> Arc<VkPipelineLayout<P, L>> {
+	pub fn build(self, device: Arc<Device>) -> Arc<VkPipelineLayout<P, L>> {
 		let info = vk::PipelineLayoutCreateInfo {
 			s_type: StructureType::PIPELINE_LAYOUT_CREATE_INFO,
 			p_next: ptr::null(),
@@ -115,4 +186,25 @@ impl<R, P, H, L> VkPipelineLayoutBuilderSetLayout<R, P, H, L> {
 			push_constants: self.push_constants,
 		})
 	}
+}
+
+impl VkPipeline<(), (), (), (), ()> {
+	pub fn builder() -> VkPipelineBuilderShaderModules<()> {
+		VkPipelineBuilderShaderModules {
+			shader_modules: (),
+		}
+	}
+}
+
+impl<S> VkPipelineBuilderShaderModules<S> {
+	pub fn shader_module<P: AsRef<std::path::Path>>(
+		self,
+		path: P,
+	) -> VkPipelineBuilderShaderModules<(S, )> {
+		unimplemented!()
+	}
+}
+
+impl<P, L, V, S, D> Drop for VkPipeline<P, L, V, S, D> {
+	fn drop(&mut self) { unsafe { self.layout.device.handle.destroy_pipeline(self.handle, None); } }
 }

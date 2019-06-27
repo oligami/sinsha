@@ -11,17 +11,25 @@ use winit::dpi::PhysicalSize;
 
 use std::time::*;
 use std::io::*;
+use std::sync::Arc;
 
 pub struct Engine;
 
 impl Engine {
 	pub fn run() {
 		let (window, mut events_loop) = Engine::create_window();
-		let instance = VkInstance::new();
-		let surface = VkSurfaceKHR::new(instance.clone(), window);
-		let (device, queue) = VkDevice::new_with_a_graphics_queue(instance, surface.clone(), 1.0);
+		let instance = Instance::new();
+		let surface = SurfaceKHR::new(instance.clone(), window);
+		let (device, queue) = Device::new_with_a_graphics_queue(instance.clone(), surface.clone(), 1.0);
 
-		start_menu::run_kai(surface, device.clone(), queue.clone(), &mut events_loop);
+		start_menu::run_kai(surface.clone(), device.clone(), queue.clone(), &mut events_loop);
+
+		drop(queue);
+		unsafe {
+			device.try_destroy().unwrap();
+			surface.try_destroy().unwrap();
+			instance.try_destroy().unwrap();
+		}
 	}
 }
 
