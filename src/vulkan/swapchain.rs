@@ -1,12 +1,12 @@
 use super::*;
-use super::mem_kai::*;
-use super::mem_kai::image::*;
+use super::mem::*;
+use super::mem::image::*;
 
 use std::ops::Range;
 
-pub struct VkSwapchainKHR<F, U> where F: Format, U: ImageUsage {
+pub struct VkSwapchainKhr<F, U> where F: Format, U: ImageUsage {
 	device: Arc<Device>,
-	surface: Arc<SurfaceKHR>,
+	surface: Arc<SurfaceKhr>,
 	loader: khr::Swapchain,
 	handle: vk::SwapchainKHR,
 	images: Vec<vk::Image>,
@@ -19,14 +19,14 @@ pub struct VkSwapchainKHR<F, U> where F: Format, U: ImageUsage {
 }
 
 pub struct VkSwapchainImageView<F, U> where F: Format, U: ImageUsage {
-	swapchain: Arc<VkSwapchainKHR<F, U>>,
+	swapchain: Arc<VkSwapchainKhr<F, U>>,
 	handle: vk::ImageView,
 }
 
-impl<F, U> VkSwapchainKHR<F, U> where U: ImageUsage, F: Format {
+impl<F, U> VkSwapchainKhr<F, U> where U: ImageUsage, F: Format {
 	pub fn new(
 		device: Arc<Device>,
-		surface: Arc<SurfaceKHR>,
+		surface: Arc<SurfaceKhr>,
 		_usage: U,
 		_format: F,
 		present_mode: vk::PresentModeKHR,
@@ -197,7 +197,7 @@ impl<F, U> VkSwapchainKHR<F, U> where U: ImageUsage, F: Format {
 
 		let new_images = unsafe { self.loader.get_swapchain_images(new_handle).unwrap() };
 
-		let new_one = VkSwapchainKHR {
+		let new_one = VkSwapchainKhr {
 			device: self.device.clone(),
 			surface: self.surface.clone(),
 			loader: self.loader.clone(),
@@ -221,7 +221,7 @@ impl<F, U> VkSwapchainKHR<F, U> where U: ImageUsage, F: Format {
 	pub fn extent(&self) -> &extent::Extent2D { &self.extent }
 }
 
-impl<F, U> Drop for VkSwapchainKHR<F, U> where F: Format, U: image::ImageUsage {
+impl<F, U> Drop for VkSwapchainKhr<F, U> where F: Format, U: image::ImageUsage {
 	fn drop(&mut self) { unsafe { self.loader.destroy_swapchain(self.handle, None); } }
 }
 

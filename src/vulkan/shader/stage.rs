@@ -4,6 +4,8 @@ pub trait ShaderStages {
 	fn shader_stages() -> ShaderStageFlags;
 }
 
+pub trait OneShaderStage: ShaderStages {}
+
 #[derive(Copy, Clone)]
 pub struct Empty;
 impl ShaderStages for Empty {
@@ -41,5 +43,26 @@ impl_shader_stage!(
 	CallableNv, CALLABLE_NV,
 	TaskNv, TASK_NV,
 	MeshNv, MESH_NV,
+);
+
+macro_rules! impl_one_shader_stage {
+	($($name: ident,)*) => {$( impl OneShaderStage for $name<Empty> {}  )*};
+}
+
+impl_one_shader_stage!(
+	Vertex,
+	TessellationControl,
+	TessellationEvaluation,
+	Geometry,
+	Fragment,
+	Compute,
+	RaygenNv,
+	AnyHitNv,
+	ClosestHitNv,
+	MissNv,
+	IntersectionNv,
+	CallableNv,
+	TaskNv,
+	MeshNv,
 );
 

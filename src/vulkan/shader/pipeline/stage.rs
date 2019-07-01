@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use ash::vk::PipelineStageFlags;
 
 pub trait PipelineStages {

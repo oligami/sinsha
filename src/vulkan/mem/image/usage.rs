@@ -22,6 +22,7 @@
 //! SHADING_RATE_IMAGE_NV
 //! FRAGMENT_DENSITY_MAP_EXT
 
+#![allow(unused)]
 
 use ash::vk::ImageUsageFlags;
 pub trait ImageUsage {

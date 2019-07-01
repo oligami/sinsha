@@ -3,40 +3,40 @@ use usage::BufferUsage;
 
 use super::*;
 
-pub struct VkBuffer<MA, BA, P, U>
+pub struct Buffer<MA, BA, P, U>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
 		  U: BufferUsage
 {
-	memory: Arc<VkMemory<MA, P>>,
+	memory: Arc<DeviceMemory<MA, P>>,
 	identifier: MA::Identifier,
 	handle: vk::Buffer,
 	allocator: Mutex<BA>,
 	_usage: PhantomData<U>,
 }
 
-pub struct VkData<MA, BA, P, U, D>
+pub struct Data<MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
-	buffer: Arc<VkBuffer<MA, BA, P, U>>,
+	buffer: Arc<Buffer<MA, BA, P, U>>,
 	identifier: BA::Identifier,
 	range: ops::Range<u64>,
 	_type: PhantomData<fn() -> D>,
 }
 
-pub struct VkDataAccess<'vk_data, MA, BA, P, U, D>
+pub struct DataAccess<'vk_data, MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
-	data: &'vk_data VkData<MA, BA, P, U, D>,
+	data: &'vk_data Data<MA, BA, P, U, D>,
 	memory_pointer: usize,
 	_no_send_or_sync: PhantomData<*mut ()>,
 }
@@ -53,14 +53,14 @@ pub enum DataErr {
 	Allocator(alloc::AllocErr),
 }
 
-impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
+impl<MA, BA, P, U> Buffer<MA, BA, P, U>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
 		  U: BufferUsage
 {
 	pub fn new<T>(
-		memory: Arc<VkMemory<MA, P>>,
+		memory: Arc<DeviceMemory<MA, P>>,
 		queue: Arc<Queue<T>>,
 		allocator: BA,
 		_usage: U,
@@ -110,15 +110,19 @@ impl<MA, BA, P, U> VkBuffer<MA, BA, P, U>
 	}
 }
 
-impl<MA, BA, P, U> Drop for VkBuffer<MA, BA, P, U>
+impl<MA, BA, P, U> Destroy for Buffer<MA, BA, P, U>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
 		  U: BufferUsage
 {
-	fn drop(&mut self) {
+	type Ok = ();
+	type Error = Infallible;
+
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error>{
 		unsafe { self.memory.device.handle.destroy_buffer(self.handle, None); }
 		self.memory.allocator.lock().unwrap().dealloc(&self.identifier);
+		Ok(())
 	}
 }
 
@@ -130,7 +134,7 @@ impl From<alloc::AllocErr> for BufferErr {
 }
 
 
-impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
+impl< MA, BA, P, U, D> Data<MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
@@ -138,7 +142,7 @@ impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 		  D: ?Sized
 {
 	pub fn new(
-		buffer: Arc<VkBuffer<MA, BA, P, U>>,
+		buffer: Arc<Buffer<MA, BA, P, U>>,
 		value: &D,
 	) -> Result<Self, DataErr> {
 		let layout = Layout::for_value(value);
@@ -147,7 +151,7 @@ impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 		Ok(Self { buffer, identifier, range, _type: PhantomData })
 	}
 
-	pub fn access(&self) -> VkDataAccess<MA, BA, P, U, D> where P: memory_property::HostVisible {
+	pub fn access(&self) -> DataAccess<MA, BA, P, U, D> where P: memory_property::HostVisible {
 		let mut access_lock = self.buffer.memory.access.lock().unwrap();
 		let memory_pointer = if access_lock.count != 0 {
 			access_lock.count += 1;
@@ -170,26 +174,34 @@ impl< MA, BA, P, U, D> VkData<MA, BA, P, U, D>
 			new_memory_pointer
 		} + self.range.start as usize;
 
-		VkDataAccess { data: self, memory_pointer, _no_send_or_sync: PhantomData }
+		DataAccess { data: self, memory_pointer, _no_send_or_sync: PhantomData }
 	}
 }
 
 
-impl<MA, BA, P, U, D> Drop for VkData<MA, BA, P, U, D>
+impl<MA, BA, P, U, D> Destroy for Data<MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
 		  U: BufferUsage,
 		  D: ?Sized
 {
-	fn drop(&mut self) { self.buffer.allocator.lock().unwrap().dealloc(&self.identifier); }
+	type Ok = ();
+	type Error = Infallible;
+
+	/// This is not Vulkan API object.
+	/// Destroying this will tell parent buffer to free memory domain of this.
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
+		self.buffer.allocator.lock().unwrap().dealloc(&self.identifier);
+		Ok(())
+	}
 }
 
 impl From<alloc::AllocErr> for DataErr {
 	fn from(a: alloc::AllocErr) -> Self { DataErr::Allocator(a) }
 }
 
-impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, D>
+impl<MA, BA, P, U, D> DataAccess<'_, MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
@@ -207,7 +219,7 @@ impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, D>
 	}
 }
 
-impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, [D]>
+impl<MA, BA, P, U, D> DataAccess<'_, MA, BA, P, U, [D]>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,
@@ -234,7 +246,7 @@ impl<MA, BA, P, U, D> VkDataAccess<'_, MA, BA, P, U, [D]>
 	}
 }
 
-impl<MA, BA, P, U, D> Drop for VkDataAccess<'_, MA, BA, P, U, D>
+impl<MA, BA, P, U, D> Drop for DataAccess<'_, MA, BA, P, U, D>
 	where MA: Allocator,
 		  BA: Allocator,
 		  P: MemoryProperty,

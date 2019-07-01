@@ -4,36 +4,31 @@ use winit::*;
 use crate::vulkan::*;
 use crate::linear_algebra::*;
 use crate::interaction::*;
-use crate::vulkan::mem_kai;
+use crate::vulkan::mem::*;
 
-use std::mem;
-use std::ops;
-use std::path::*;
-use std::error::Error;
-use std::time::SystemTime;
 use std::sync::Arc;
 
 pub fn run_kai(
-	surface: Arc<SurfaceKHR>,
+	surface: Arc<SurfaceKhr>,
 	device: Arc<Device>,
 	queue: Arc<Queue<Graphics>>,
 	_events_loop: &mut EventsLoop,
 ) {
-	let alloc = mem_kai::alloc::BuddyAllocator::new(5, 0x100);
-	let memory = mem_kai::VkMemory::with_allocator(
+	let alloc = alloc::BuddyAllocator::new(5, 0x100);
+	let memory = DeviceMemory::with_allocator(
 		device.clone(),
 		alloc,
-		mem_kai::memory_property::HostVisibleFlag(mem_kai::memory_property::Empty),
+		memory_property::HostVisibleFlag(memory_property::Empty),
 	).unwrap();
 
-	let buffer = mem_kai::buffer::VkBuffer::new(
+	let buffer = buffer::Buffer::new(
 		memory.clone(),
 		queue.clone(),
-		mem_kai::alloc::BuddyAllocator::new(4, 0x10),
-		mem_kai::buffer::usage::VertexBufferFlag(mem_kai::buffer::usage::Empty),
+		alloc::BuddyAllocator::new(4, 0x10),
+		buffer::usage::VertexBufferFlag(buffer::usage::Empty),
 	).unwrap();
 
-	let data = mem_kai::buffer::VkData::new(buffer.clone(), &31_u32).unwrap();
+	let data = buffer::Data::new(buffer.clone(), &31_u32).unwrap();
 	let mut access = data.access();
 	let uninit = access.as_ref().clone();
 	*access.as_mut() = 32;
@@ -42,7 +37,7 @@ pub fn run_kai(
 	println!("uninit: {}, init: {}", uninit, read);
 
 	let data = Arc::new(data);
-	let data2 = Arc::new(mem_kai::buffer::VkData::new(buffer.clone(), &(1_u32, 0_u32)).unwrap());
+	let data2 = Arc::new(buffer::Data::new(buffer.clone(), &(1_u32, 0_u32)).unwrap());
 	let handle = {
 		let data = data.clone();
 		let data2 = data2.clone();
@@ -65,8 +60,8 @@ pub fn run_kai(
 
 	println!("changed by thread: {}, and 2: {:?}", read, read2);
 
-	use mem_kai::image::*;
-	let render_pass = render_pass::VkRenderPass::builder()
+	use image::*;
+	let render_pass = render_pass::RenderPass::builder()
 		.color_attachment(
 			format::B8G8R8A8_UNORM,
 			sample_count::Type1,
@@ -100,7 +95,7 @@ pub fn run_kai(
 		)
 		.build(device.clone());
 
-	let swapchain = swapchain::VkSwapchainKHR::new(
+	let swapchain = swapchain::VkSwapchainKhr::new(
 		device.clone(),
 		surface.clone(),
 		usage::ColorAttachmentFlag(usage::Empty),
@@ -110,7 +105,7 @@ pub fn run_kai(
 	);
 
 	let extent = swapchain.extent();
-	let swapchain_image_views = swapchain::VkSwapchainKHR::views(&swapchain);
+	let swapchain_image_views = swapchain::VkSwapchainKhr::views(&swapchain);
 
 	let framebuffers: Vec<_> = swapchain_image_views.iter()
 		.map(|view| {
@@ -120,29 +115,34 @@ pub fn run_kai(
 		})
 		.collect();
 
-	let descriptor_set_layout = shader::descriptor::VkDescriptorSetLayout::builder()
+	let descriptor_set_layout = shader::descriptor::DescriptorSetLayout::builder()
 		.binding(
-			shader::descriptor::ty::CombinedImageSampler,
-			1,
+			[shader::descriptor::ty::CombinedImageSampler; 1],
 			shader::stage::Fragment(shader::stage::Empty),
+			(),
 		)
 		.build(device.clone());
 
-	let descriptor_pool = shader::descriptor::VkDescriptorPool::builder()
+	let descriptor_pool = shader::descriptor::DescriptorPool::builder()
 		.layout(descriptor_set_layout.clone())
 		.pool_size()
 		.build(3, device.clone());
 
-	let descriptor_sets = shader::descriptor::VkDescriptorSet::new(
+	let descriptor_sets = shader::descriptor::DescriptorSet::new(
 		&[descriptor_set_layout.clone()],
 		descriptor_pool.clone(),
 	);
 
-	let pipeline_layout = shader::pipeline::VkPipelineLayout::builder()
-		.push_constant::<RGBA, _>(shader::stage::Vertex(shader::stage::Empty))
+	let pipeline_layout = shader::pipeline::PipelineLayout::builder()
+		.push_constant(
+			shader::pipeline::PushConstant::new::<RGBA>(),
+			shader::stage::Vertex(shader::stage::Empty)
+		)
 		.descriptor_set_layout()
 		.set_layout(descriptor_set_layout.clone())
 		.build(device.clone());
+
+
 }
 
 

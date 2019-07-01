@@ -1,185 +1,181 @@
 pub mod stage;
+pub mod dynamic_state;
 
 use super::*;
-use super::stage::ShaderStages;
-use super::descriptor::VkDescriptorSetLayout;
+use super::stage::OneShaderStage;
+use super::descriptor::DescriptorSetLayout;
 
-pub struct VkPipelineLayout<P, L> {
+pub struct PipelineLayout<P, L> {
 	device: Arc<Device>,
 	handle: vk::PipelineLayout,
-	push_constants: P,
-	set_layouts: L,
+	push_constants: PhantomData<P>,
+	set_layouts: PhantomData<L>,
 }
 
-pub struct VkPipelineLayoutBuilderPushConstants<R, P> {
-	push_constant_count: u32,
-	push_constant_offset: u32,
-	push_constant_ranges: R,
-	push_constants: P,
+pub struct PipelineLayoutBuilderPushConstants<P> {
+	ranges: Vec<vk::PushConstantRange>,
+	offset: u32,
+	push_constants: PhantomData<fn() -> P>,
 }
 
-pub struct VkPipelineLayoutBuilderSetLayout<R, P, H, L> {
-	push_constant_count: u32,
-	push_constant_ranges: R,
-	push_constants: P,
+pub struct PushConstant<T>(PhantomData<fn() -> T>);
+
+pub struct PipelineLayoutBuilderSetLayout<P, H, L> {
+	push_constant_ranges: Vec<vk::PushConstantRange>,
+	push_constants: PhantomData<P>,
 	set_layout_count: u32,
 	set_layout_handles: H,
-	set_layouts: L,
+	set_layouts: PhantomData<L>,
 }
 
-pub struct VkPipeline<P, L, V, S, D> {
+pub struct ComputePipeline<P, L> {
 	handle: vk::Pipeline,
-	layout: VkPipelineLayout<P, L>,
-	vertex_type: PhantomData<V>,
-	specialization_constants: S,
-	dynamic_states: D,
+	layout: Arc<PipelineLayout<P, L>>,
 }
 
-pub struct VkPipelineBuilderShaderModules<S> {
-	shader_modules: S
-}
-pub struct VkPipelineBuilderInput<S, V> {
-	shader_modules: S,
-	vertex: V,
-}
-pub struct VkPipelineBuilderInputAssembly<S, V> {
-	shader_modules: S,
-	vertex: V,
-	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
-}
-pub struct VkPipelineBuilderTessellation<S, V> {
-	shader_modules: S,
-	vertex: V,
-	tessellation: vk::PipelineTessellationStateCreateInfo,
-}
-pub struct VkPipelineBuilderViewport<S, V> {
-	shader_modules: S,
-	vertex: V,
-	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
-	tessellation: vk::PipelineTessellationStateCreateInfo,
-	viewport: vk::PipelineViewportStateCreateInfo,
-}
-pub struct VkPipelineBuilderRasterization<S, V> {
-	shader_modules: S,
-	vertex: V,
-	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
-	tessellation: vk::PipelineTessellationStateCreateInfo,
-	viewport: vk::PipelineViewportStateCreateInfo,
-	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
-}
-pub struct VkPipelineBuilderMultisample<S, V> {
-	shader_modules: S,
-	vertex: V,
-	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
-	tessellation: vk::PipelineTessellationStateCreateInfo,
-	viewport: vk::PipelineViewportStateCreateInfo,
-	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
-	multisample: vk::PipelineMultisampleStateCreateInfo,
-}
-pub struct VkPipelineBuilderDepthStencil<S, V> {
-	shader_modules: S,
-	vertex: V,
-	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
-	tessellation: vk::PipelineTessellationStateCreateInfo,
-	viewport: vk::PipelineViewportStateCreateInfo,
-	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
-	multisample: vk::PipelineMultisampleStateCreateInfo,
-	depth_stencil: vk::PipelineDepthStencilStateCreateInfo,
-}
-pub struct VkPipelineBuilderColorBlend<S, V> {
-	shader_modules: S,
-	vertex: V,
-	input_assembly: vk::PipelineInputAssemblyStateCreateInfo,
-	tessellation: vk::PipelineTessellationStateCreateInfo,
-	viewport: vk::PipelineViewportStateCreateInfo,
-	rasterizaion: vk::PipelineRasterizationStateCreateInfo,
-	multisample: vk::PipelineMultisampleStateCreateInfo,
-	depth_stencil: vk::PipelineDepthStencilStateCreateInfo,
-	color_blend: vk::PipelineColorBlendStateCreateInfo,
+pub struct GraphicsPipeline<A, S, P, L, V, D> {
+	handle: vk::Pipeline,
+	render_pass: Arc<render_pass::RenderPass<A, S>>,
+	layout: Arc<PipelineLayout<P, L>>,
+	vertex_or_mesh: PhantomData<V>,
+	dynamic_states: PhantomData<D>,
 }
 
-impl VkPipelineLayout<(), ()> {
-	pub fn builder() -> VkPipelineLayoutBuilderPushConstants<(), ()> {
-		VkPipelineLayoutBuilderPushConstants {
-			push_constant_count: 0,
-			push_constant_ranges: (),
-			push_constant_offset: 0,
-			push_constants: (),
+pub struct PipelineShaderStagesBuilder<P, L> {
+	layout: Arc<PipelineLayout<P, L>>,
+	shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
+	shader_stage_holders: Vec<ShaderStageHolder>,
+}
+
+struct ShaderStageHolder {
+	invoke_fn_name: CString,
+	specialization_info: Option<Box<vk::SpecializationInfo>>,
+	data_and_maps: Option<Specializations>,
+}
+
+pub struct Specializations {
+	maps: Vec<vk::SpecializationMapEntry>,
+	data: Vec<u8>,
+}
+
+pub struct GraphicsPipelineBuilder<P, L> {
+	layout: Arc<PipelineLayout<P, L>>,
+}
+
+pub struct GraphicsPipelineBuilderS {
+	vertex_input_binding_descriptions: Vec<vk::VertexInputBindingDescription>,
+	vertex_input_attribute_descriptions: Vec<vk::VertexInputAttributeDescription>,
+	topology: vk::PrimitiveTopology,
+	primitive_restart: vk::Bool32,
+	tessellation_path_control_points: u32,
+	viewports: Vec<vk::Viewport>,
+	scissors: Vec<vk::Rect2D>,
+}
+
+pub struct GraphicsPipelineBuilderDynamicState<D> {
+	dynamic_state: PhantomData<D>,
+}
+
+pub struct GraphicsPipelineBuilderSubpassSelect<A, S, I> {
+	render_pass: Arc<render_pass::RenderPass<A, S>>,
+	subpass_index: u32,
+	subpass: PhantomData<I>,
+}
+
+
+impl PipelineLayout<(), ()> {
+	pub fn builder() -> PipelineLayoutBuilderPushConstants<()> {
+		PipelineLayoutBuilderPushConstants {
+			ranges: Vec::new(),
+			offset: 0,
+			push_constants: PhantomData,
 		}
 	}
 }
 
-impl<P, L> Drop for VkPipelineLayout<P, L> {
+impl<P, L> PipelineLayout<P, L> {
+	pub fn graphics_pipeline_builder(self: Arc<Self>) -> GraphicsPipelineBuilder<P, L> {
+		GraphicsPipelineBuilder { layout: self }
+	}
+}
+
+impl<P, L> Drop for PipelineLayout<P, L> {
 	fn drop(&mut self) { unsafe { self.device.handle.destroy_pipeline_layout(self.handle, None) } }
 }
 
-impl<R, P> VkPipelineLayoutBuilderPushConstants<R, P> {
+impl<P> PipelineLayoutBuilderPushConstants<P> {
 	pub fn push_constant<T, S>(
-		self,
+		mut self,
+		data_type: PushConstant<T>,
 		stage: S,
-	) -> VkPipelineLayoutBuilderPushConstants<
-		(R, vk::PushConstantRange),
-		(P, (PhantomData<fn() -> T>, S))
-	> where S: ShaderStages {
+	) -> PipelineLayoutBuilderPushConstants<(P, T)> where S: OneShaderStage {
+		let align = std::mem::align_of::<T>() as u32;
+		let offset = if self.offset % align == 0 {
+			self.offset
+		} else {
+			align * (self.offset / align + 1)
+		};
+
 		let push_constant = vk::PushConstantRange {
 			stage_flags: S::shader_stages(),
-			offset: self.push_constant_offset,
+			offset,
 			size: std::mem::size_of::<T>() as u32,
 		};
 
 		println!("size: {}", std::mem::size_of::<T>());
 
-		VkPipelineLayoutBuilderPushConstants {
-			push_constant_count: self.push_constant_count + 1,
-			push_constant_ranges: (self.push_constant_ranges, push_constant),
-			push_constant_offset: self.push_constant_offset + std::mem::size_of::<T>() as u32,
-			push_constants: (self.push_constants, (PhantomData, stage)),
+		self.ranges.push(push_constant);
+		PipelineLayoutBuilderPushConstants {
+			ranges: self.ranges,
+			offset: offset + std::mem::size_of::<T>() as u32,
+			push_constants: PhantomData,
 		}
 	}
 
-	pub fn descriptor_set_layout(self) -> VkPipelineLayoutBuilderSetLayout<R, P, (), ()> {
-		VkPipelineLayoutBuilderSetLayout {
-			push_constant_count: self.push_constant_count,
-			push_constant_ranges: self.push_constant_ranges,
-			push_constants: self.push_constants,
+	pub fn descriptor_set_layout(self) -> PipelineLayoutBuilderSetLayout<P, (), ()> {
+		PipelineLayoutBuilderSetLayout {
+			push_constant_ranges: self.ranges,
+			push_constants: PhantomData,
 			set_layout_count: 0,
 			set_layout_handles: (),
-			set_layouts: (),
+			set_layouts: PhantomData,
 		}
 	}
 }
 
-impl<R, P, H, L> VkPipelineLayoutBuilderSetLayout<R, P, H, L> {
+impl PushConstant<()> {
+	pub fn new<T>() -> PushConstant<T> { PushConstant(PhantomData) }
+}
+
+impl<P, H, L> PipelineLayoutBuilderSetLayout<P, H, L> {
 	pub fn set_layout<L1>(
 		self,
-		set_layout: Arc<VkDescriptorSetLayout<L1>>,
-	) -> VkPipelineLayoutBuilderSetLayout<R, P, (H, vk::DescriptorSetLayout), (L, L1)>
-		where L1: Copy
+		set_layout: Arc<DescriptorSetLayout<L1>>,
+	) -> PipelineLayoutBuilderSetLayout<P, (H, vk::DescriptorSetLayout), (L, L1)>
 	{
-		VkPipelineLayoutBuilderSetLayout {
-			push_constant_count: self.push_constant_count,
+		PipelineLayoutBuilderSetLayout {
 			push_constant_ranges: self.push_constant_ranges,
 			push_constants: self.push_constants,
 			set_layout_count: self.set_layout_count + 1,
 			set_layout_handles: (self.set_layout_handles, set_layout.handle()),
-			set_layouts: (self.set_layouts, set_layout.layout()),
+			set_layouts: PhantomData,
 		}
 	}
 
-	pub fn build(self, device: Arc<Device>) -> Arc<VkPipelineLayout<P, L>> {
+	pub fn build(self, device: Arc<Device>) -> Arc<PipelineLayout<P, L>> {
 		let info = vk::PipelineLayoutCreateInfo {
 			s_type: StructureType::PIPELINE_LAYOUT_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineLayoutCreateFlags::empty(),
 			set_layout_count: self.set_layout_count,
 			p_set_layouts: &self.set_layout_handles as *const _ as *const _,
-			push_constant_range_count: self.push_constant_count,
-			p_push_constant_ranges: &self.push_constant_ranges as *const _ as *const _,
+			push_constant_range_count: self.push_constant_ranges.len() as u32,
+			p_push_constant_ranges: self.push_constant_ranges.as_ptr(),
 		};
 
 		let handle = unsafe { device.handle.create_pipeline_layout(&info, None).unwrap() };
 
-		Arc::new(VkPipelineLayout {
+		Arc::new(PipelineLayout {
 			device,
 			handle,
 			set_layouts: self.set_layouts,
@@ -188,23 +184,124 @@ impl<R, P, H, L> VkPipelineLayoutBuilderSetLayout<R, P, H, L> {
 	}
 }
 
-impl VkPipeline<(), (), (), (), ()> {
-	pub fn builder() -> VkPipelineBuilderShaderModules<()> {
-		VkPipelineBuilderShaderModules {
-			shader_modules: (),
+impl<A, S, P, L, V, D> Drop for GraphicsPipeline<A, S, P, L, V, D> {
+	fn drop(&mut self) {
+		unsafe { self.layout.device.handle.destroy_pipeline(self.handle, None); }
+	}
+}
+
+impl<P, L> PipelineShaderStagesBuilder<P, L> {
+	/// # Safety
+	/// A SPIR-V file indicated by path may have incompatible contents.
+	/// Especially, the pipeline layout, descriptor set layouts, push constants,
+	/// specialization constants, the shader stage.
+	pub unsafe fn shader_stage<Path, N, S>(
+		mut self,
+		path: Path,
+		invoke_fn_name: N,
+		stage_flag: S,
+		specializations: Option<Specializations>,
+	) -> Self where Path: AsRef<std::path::Path>, N: Into<Vec<u8>>, S: OneShaderStage {
+
+		let module = {
+			use std::io::Read;
+
+			let mut spv = std::fs::File::open(path).unwrap();
+			let mut buf = Vec::new();
+			spv.read_to_end(&mut buf).unwrap();
+
+			let info = vk::ShaderModuleCreateInfo {
+				s_type: StructureType::SHADER_MODULE_CREATE_INFO,
+				p_next: ptr::null(),
+				flags: vk::ShaderModuleCreateFlags::empty(),
+				code_size: buf.len(),
+				p_code: buf.as_ptr() as _,
+			};
+
+			self.layout.device.handle.create_shader_module(&info, None).unwrap()
+		};
+
+		let invoke_fn_name = CString::new(invoke_fn_name).unwrap();
+
+		let mut holder = ShaderStageHolder {
+			invoke_fn_name,
+			specialization_info: None,
+			data_and_maps: None
+		};
+
+		let p_specialization_info = specializations
+			.map(|s| {
+				let info = vk::SpecializationInfo {
+					map_entry_count: s.maps.len() as u32,
+					p_map_entries: s.maps.as_ptr(),
+					data_size: s.data.len(),
+					p_data: s.data.as_ptr() as _,
+				};
+
+				let info = Box::new(info);
+				let ptr = info.as_ref() as *const _;
+				holder.specialization_info = Some(info);
+				holder.data_and_maps = Some(s);
+
+				ptr
+			})
+			.unwrap_or(ptr::null());
+
+		let stage_info = vk::PipelineShaderStageCreateInfo {
+			s_type: StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+			p_next: ptr::null(),
+			flags: vk::PipelineShaderStageCreateFlags::empty(),
+			stage: S::shader_stages(),
+			module,
+			p_name: holder.invoke_fn_name.as_ptr(),
+			p_specialization_info,
+		};
+
+		self.shader_stages.push(stage_info);
+		self.shader_stage_holders.push(holder);
+
+		self
+	}
+}
+
+impl Specializations {
+	/// offset
+	pub fn new<T>(data: T) -> Self {
+		let data = unsafe {
+			let ptr = &data as *const _ as *mut u8;
+			let size = std::mem::size_of::<T>();
+			Vec::from_raw_parts(ptr, size, size)
+		};
+
+		Self {
+			maps: vec![],
+			data,
 		}
 	}
-}
 
-impl<S> VkPipelineBuilderShaderModules<S> {
-	pub fn shader_module<P: AsRef<std::path::Path>>(
-		self,
-		path: P,
-	) -> VkPipelineBuilderShaderModules<(S, )> {
-		unimplemented!()
+	pub fn constant(mut self, id: u32, range: std::ops::Range<usize>) -> Self {
+		self.maps.push(vk::SpecializationMapEntry {
+			constant_id: id,
+			offset: range.start as u32,
+			size: range.end - range.start,
+		});
+		self
 	}
 }
 
-impl<P, L, V, S, D> Drop for VkPipeline<P, L, V, S, D> {
-	fn drop(&mut self) { unsafe { self.layout.device.handle.destroy_pipeline(self.handle, None); } }
+impl<P, L> GraphicsPipelineBuilder<P, L> {
+	pub fn dynamic_state(&self) -> GraphicsPipelineBuilderDynamicState<()> {
+		GraphicsPipelineBuilderDynamicState { dynamic_state: PhantomData }
+	}
+
+	pub fn subpass_select<A, S>(
+		&self,
+		render_pass: Arc<render_pass::RenderPass<A, S>>,
+	) -> GraphicsPipelineBuilderSubpassSelect<A, S, S> {
+		GraphicsPipelineBuilderSubpassSelect {
+			subpass_index: render_pass.subpass_count(),
+			render_pass,
+			subpass: PhantomData,
+		}
+	}
 }

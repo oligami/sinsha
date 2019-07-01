@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 use ash::vk::SampleCountFlags;
 pub trait SampleCount {
 	fn sample_count() -> SampleCountFlags;

@@ -14,6 +14,7 @@
 //! LAZILY_ALLOCATED
 //! PROTECTED
 
+#![allow(unused)]
 
 use ash::vk::MemoryPropertyFlags;
 

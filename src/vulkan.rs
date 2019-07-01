@@ -1,12 +1,10 @@
-pub mod mem_kai;
+pub mod mem;
 pub mod render_pass;
 pub mod swapchain;
 pub mod framebuffer;
 pub mod shader;
 
-pub use self::mem_kai::alloc;
-
-use crate::linear_algebra::*;
+pub use self::mem::alloc;
 
 use ash::vk;
 use ash::vk::StructureType;
@@ -25,28 +23,36 @@ use std::ptr;
 use std::ffi::CString;
 use std::default::Default;
 use std::marker::PhantomData;
-use std::ops::Range;
 use std::sync::Arc;
 
 pub trait Destroy: Sized {
+	type Ok;
 	type Error: std::error::Error;
 
 	/// Destroy Vulkan API objects without checking.
 	///
 	/// # Safety
-	/// Be careful for objects used by GPU such as Buffer, Image, DescriptorSet, etc.
-	/// This method can cause memory violence very easily.
+	/// This method can cause memory violence very easily,
+	/// but destroying will occur after all child objects have been destroyed.
+	/// This is achieved by child objects having parent objects in std::sync::Arc.
 	///
+	/// So, you should be careful for objects used by GPU such as Buffer, Image, DescriptorSet, etc.
+	///
+	/// # Future
+	/// Manually drop by this destructor should be replaced by Auto-Drop.
+	/// A vk::CommandBuffer with a Fence and objects such as Buffer can be achieve this.
+	///
+	/// # Multi Thread Synchronization
 	/// Vulkan API says: "Host access to objects must be externally synchronized."
 	/// This is satisfied by taking ownership. It's also prevent from double-freeing.
-	unsafe fn destroy(self) -> Result<(), Self::Error>;
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error>;
 
 
 	/// Almost all objects are used in std::sync::Arc.
 	/// If strong count of Arc is not 1, this method will fail to destroying and return error.
 	/// If strong count of Arc is 1, then self will be destroyed.
 	/// This method is just for convenience.
-	unsafe fn try_destroy(self: Arc<Self>) -> Result<(), DestroyError<Self::Error>> {
+	unsafe fn try_destroy(self: Arc<Self>) -> Result<Self::Ok, DestroyError<Self::Error>> {
 		let obj = Arc::try_unwrap(self).map_err(|_| DestroyError::NonZeroStrongCount)?;
 		obj.destroy().map_err(|e| DestroyError::Specific(e))
 	}
@@ -113,7 +119,7 @@ pub struct PhysicalDevice {
 	memory_heaps: Vec<vk::MemoryHeap>,
 }
 
-pub struct SurfaceKHR {
+pub struct SurfaceKhr {
 	instance: Arc<Instance>,
 	loader: khr::Surface,
 	handle: vk::SurfaceKHR,
@@ -209,14 +215,15 @@ impl Instance {
 }
 
 impl Destroy for Instance {
+	type Ok = ();
 	type Error = Infallible;
-	unsafe fn destroy(self) -> Result<(), Self::Error>{
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error>{
 		self.handle.destroy_instance(None);
 		Ok(())
 	}
 }
 
-impl SurfaceKHR {
+impl SurfaceKhr {
 	pub fn new(instance: Arc<Instance>, window: Window) -> Arc<Self> {
 		let loader = khr::Surface::new(&instance.entry, &instance.handle);
 		let handle = unsafe { Self::handle(&instance.entry, &instance.handle, &window) };
@@ -247,11 +254,12 @@ impl SurfaceKHR {
 	}
 }
 
-impl Destroy for SurfaceKHR {
+impl Destroy for SurfaceKhr {
+	type Ok = ();
 	type Error = Infallible;
 	/// You must destroy this before destroying Instance that create this.
 	/// Also you must not destroy this before Swapchain created by this.
-	unsafe fn destroy(self) -> Result<(), Self::Error> {
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
 		self.loader.destroy_surface(self.handle, None);
 		Ok(())
 	}
@@ -260,7 +268,7 @@ impl Destroy for SurfaceKHR {
 impl Device {
 	pub fn new_with_a_graphics_queue(
 		instance: Arc<Instance>,
-		surface: Arc<SurfaceKHR>,
+		surface: Arc<SurfaceKhr>,
 		queue_priority: f32,
 	) -> (Arc<Self>, Arc<Queue<Graphics>>) {
 		let (physical_device_index, queue_family_index) = instance.physical_devices
@@ -359,9 +367,10 @@ impl Device {
 }
 
 impl Destroy for Device {
+	type Ok = ();
 	type Error = Infallible;
 
-	unsafe fn destroy(self) -> Result<(), Self::Error> {
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
 		self.handle.destroy_device(None);
 		Ok(())
 	}

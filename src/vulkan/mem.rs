@@ -14,22 +14,16 @@ use ash::version::DeviceV1_0;
 
 use crate::vulkan::*;
 
-use std::io;
-use std::fs::File;
 use std::ptr;
 use std::ops;
-use std::fmt;
 use std::mem;
 use std::slice;
-use std::borrow::Borrow;
 use std::marker::PhantomData;
-use std::error::Error;
-use std::path::Path;
 use std::sync::{ Arc, Mutex };
 use std::alloc::Layout;
 
 
-pub struct VkMemory<A, P> where A: Allocator, P: MemoryProperty {
+pub struct DeviceMemory<A, P> where A: Allocator, P: MemoryProperty {
 	device: Arc<Device>,
 	handle: vk::DeviceMemory,
 	type_index: u32,
@@ -51,7 +45,7 @@ pub enum MemoryErr {
 }
 
 
-impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
+impl<A, P> DeviceMemory<A, P> where A: Allocator, P: MemoryProperty {
 	pub fn with_allocator(
 		device: Arc<Device>,
 		allocator: A,
@@ -73,11 +67,6 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 
 			device.handle.allocate_memory(&info, None)?
 		};
-
-		// This Arc should be drop by end of this function to make Weak can't be upgraded.
-		let dummy_arc = Arc::new(0);
-		let mapping = Mutex::new(Arc::downgrade(&dummy_arc));
-		drop(dummy_arc);
 
 		let memory = Self {
 			device,
@@ -109,11 +98,12 @@ impl<A, P> VkMemory<A, P> where A: Allocator, P: MemoryProperty {
 	}
 }
 
-impl<A, P> Drop for VkMemory<A, P>
-	where A: Allocator,
-		  P: MemoryProperty
-{
-	fn drop(&mut self) {
+impl<A, P> Destroy for DeviceMemory<A, P> where A: Allocator, P: MemoryProperty {
+	type Ok = ();
+	type Error = Infallible;
+
+	///
+	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
 		unsafe { self.device.handle.free_memory(self.handle, None) }
 
 		// Ensure that there is no cpu access to this memory.
@@ -122,6 +112,8 @@ impl<A, P> Drop for VkMemory<A, P>
 			"There is/are {} cpu access to this vk::DeviceMemory!",
 			self.access.lock().unwrap().count,
 		);
+
+		Ok(())
 	}
 }
 

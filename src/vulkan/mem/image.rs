@@ -10,7 +10,7 @@ pub use extent::{ Extent, ArrayLayers };
 pub use format::{ Format, DepthFormat, StencilFormat };
 pub use sample_count::SampleCount;
 
-pub struct VkImage<E, F, S, U, A, P>
+pub struct Image<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
 		  S: SampleCount,
@@ -18,7 +18,7 @@ pub struct VkImage<E, F, S, U, A, P>
 		  A: Allocator,
 		  P: MemoryProperty
 {
-	memory: Arc<VkMemory<A, P>>,
+	memory: Arc<DeviceMemory<A, P>>,
 	handle: vk::Image,
 	extent: E,
 	_format: PhantomData<F>,
@@ -29,7 +29,7 @@ pub struct VkImage<E, F, S, U, A, P>
 }
 
 // TODO: VkImage need P but VkImageView doesn't need P. (I think.)
-pub struct VkImageView<E, F, S, U, A, P>
+pub struct ImageView<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
 		  S: SampleCount,
@@ -37,13 +37,13 @@ pub struct VkImageView<E, F, S, U, A, P>
 		  A: Allocator,
 		  P: MemoryProperty
 {
-	image: Arc<VkImage<E, F, S, U, A, P>>,
+	image: Arc<Image<E, F, S, U, A, P>>,
 	handle: vk::ImageView,
 	mip_range: ops::Range<u32>,
 	layer_range: ops::Range<u32>,
 }
 
-impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
+impl<E, F, S, U, A, P> Image<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
 		  S: SampleCount,
@@ -52,7 +52,7 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 		  P: MemoryProperty
 {
 	pub fn new<T>(
-		memory: Arc<VkMemory<A, P>>,
+		memory: Arc<DeviceMemory<A, P>>,
 		queue: Arc<Queue<T>>,
 		extent: E,
 		_format: F,
@@ -101,7 +101,7 @@ impl<E, F, S, U, A, P> VkImage<E, F, S, U, A, P>
 	pub fn extent(&self) -> &E { &self.extent }
 }
 
-impl<E, F, S, U, A, P> Drop for VkImage<E, F, S, U, A, P>
+impl<E, F, S, U, A, P> Drop for Image<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
 		  S: SampleCount,
@@ -112,7 +112,7 @@ impl<E, F, S, U, A, P> Drop for VkImage<E, F, S, U, A, P>
 	fn drop(&mut self) { unsafe { self.memory.device.handle.destroy_image(self.handle, None); } }
 }
 
-impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
+impl<E, F, S, U, A, P> ImageView<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
 		  S: SampleCount,
@@ -121,7 +121,7 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 		  P: MemoryProperty
 {
 	pub fn new(
-		image: Arc<VkImage<E, F, S, U, A, P>>,
+		image: Arc<Image<E, F, S, U, A, P>>,
 		aspect: vk::ImageAspectFlags,
 		mip_range: ops::Range<u32>,
 		layer_range: E::ArrayLayers,
@@ -162,13 +162,13 @@ impl<E, F, S, U, A, P> VkImageView<E, F, S, U, A, P>
 	pub fn handle(&self) -> vk::ImageView { self.handle }
 
 	#[inline]
-	pub fn image(&self) -> &Arc<VkImage<E, F, S, U, A, P>> { &self.image }
+	pub fn image(&self) -> &Arc<Image<E, F, S, U, A, P>> { &self.image }
 
 	#[inline]
 	pub fn layer_range(&self) -> &ops::Range<u32> { &self.layer_range }
 }
 
-impl<E, F, S, U, A, P> Drop for VkImageView<E, F, S, U, A, P>
+impl<E, F, S, U, A, P> Drop for ImageView<E, F, S, U, A, P>
 	where E: Extent,
 		  F: Format,
 		  S: SampleCount,

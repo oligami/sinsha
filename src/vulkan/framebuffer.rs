@@ -1,12 +1,11 @@
 use super::*;
-use super::mem_kai::*;
-use super::mem_kai::image::*;
-use super::render_pass::{ VkRenderPass, VkAttachment };
+use super::mem::*;
+use super::render_pass::{RenderPass, Attachment};
 use super::swapchain::VkSwapchainImageView;
 
 pub struct VkFrameBuffer<V, A, S> {
 	handle: vk::Framebuffer,
-	render_pass: Arc<VkRenderPass<A, S>>,
+	render_pass: Arc<RenderPass<A, S>>,
 	image_views: V,
 }
 
@@ -47,11 +46,11 @@ impl<V, A, S> Drop for VkFrameBuffer<V, A, S> {
 impl<V, H, A> VkFrameBufferBuilder<V, H, A> {
 	pub fn attach_image_view<F, S, U, MA, P>(
 		mut self,
-		image_view: Arc<image::VkImageView<extent::Extent2D, F, S, U, MA, P>>,
+		image_view: Arc<image::ImageView<extent::Extent2D, F, S, U, MA, P>>,
 	) -> VkFrameBufferBuilder<
-		(V, Arc<image::VkImageView<extent::Extent2D, F, S, U, MA, P>>),
+		(V, Arc<image::ImageView<extent::Extent2D, F, S, U, MA, P>>),
 		(H, vk::ImageView),
-		(A, VkAttachment<F, S>)
+		(A, Attachment<F, S>)
 	>
 		where F: Format,
 			  S: SampleCount,
@@ -85,7 +84,7 @@ impl<V, H, A> VkFrameBufferBuilder<V, H, A> {
 	) -> VkFrameBufferBuilder<
 		(V, Arc<VkSwapchainImageView<F, U>>),
 		(H, vk::ImageView),
-		(A, VkAttachment<F, sample_count::Type1>)
+		(A, Attachment<F, sample_count::Type1>)
 	> where F: Format, U: image::ImageUsage
 	{
 		self.info.attachment_count += 1;
@@ -105,7 +104,7 @@ impl<V, H, A> VkFrameBufferBuilder<V, H, A> {
 	}
 
 	// this builder must have more than one attachment because A is same as A of VkRenderPass.
-	pub fn build<S>(mut self, render_pass: Arc<VkRenderPass<A, S>>) -> Arc<VkFrameBuffer<V, A, S>> {
+	pub fn build<S>(mut self, render_pass: Arc<RenderPass<A, S>>) -> Arc<VkFrameBuffer<V, A, S>> {
 		self.info.p_attachments = &self.handles as *const _ as *const _;
 		self.info.render_pass = render_pass.handle();
 

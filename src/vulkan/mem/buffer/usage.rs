@@ -30,6 +30,7 @@
 //! RAY_TRACING_NV
 //! SHADER_DEVICE_ADDRESS_EXT
 
+#![allow(unused)]
 
 use ash::vk::BufferUsageFlags;
 

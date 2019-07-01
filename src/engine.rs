@@ -1,17 +1,9 @@
 mod start_menu;
 
-use ash::vk;
-
 use crate::vulkan::*;
-use crate::interaction::*;
-use crate::linear_algebra::*;
 
 use winit::*;
 use winit::dpi::PhysicalSize;
-
-use std::time::*;
-use std::io::*;
-use std::sync::Arc;
 
 pub struct Engine;
 
@@ -19,7 +11,7 @@ impl Engine {
 	pub fn run() {
 		let (window, mut events_loop) = Engine::create_window();
 		let instance = Instance::new();
-		let surface = SurfaceKHR::new(instance.clone(), window);
+		let surface = SurfaceKhr::new(instance.clone(), window);
 		let (device, queue) = Device::new_with_a_graphics_queue(instance.clone(), surface.clone(), 1.0);
 
 		start_menu::run_kai(surface.clone(), device.clone(), queue.clone(), &mut events_loop);
