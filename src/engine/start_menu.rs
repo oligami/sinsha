@@ -142,7 +142,23 @@ pub fn run_kai(
 		.set_layout(descriptor_set_layout.clone())
 		.build(device.clone());
 
-
+	shader::pipeline::GraphicsPipeline::builder()
+		.primitive_topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+		.primitive_restart_disable()
+		.viewport(vk::Viewport {
+			x: 0.0, y: 0.0, width: 1280.0, height: 720.0, min_depth: 0.0, max_depth: 0.0,
+		})
+		.scissor(vk::Rect2D {
+			offset: vk::Offset2D { x: 0, y: 0 }, extent: vk::Extent2D { width: 1280, height: 720 } }
+		)
+		.rasterizer_discard_enable()
+		.polygon_mode(vk::PolygonMode::FILL)
+		.cull_mode(vk::CullModeFlags::NONE)
+		.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+		.depth_clamp_disable()
+		.depth_bias_disable()
+		.line_width(1.0)
+		.sample_count(vk::SampleCountFlags::TYPE_1);
 }
 
 
