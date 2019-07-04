@@ -69,6 +69,7 @@ pub struct GraphicsPipelineBuilder<S> {
 	color_blend_state: vk::PipelineColorBlendStateCreateInfo,
 	viewports: Vec<vk::Viewport>,
 	scissors: Vec<vk::Rect2D>,
+	sample_mask: Box<u32>,
 	state: PhantomData<S>,
 }
 
@@ -86,11 +87,11 @@ pub struct LineWidth;
 pub struct SampleCount;
 pub struct SampleShading;
 pub struct SampleMask;
-pub struct Alpha;
+pub struct AlphaToCoverage;
+pub struct AlphaToOne;
 pub struct DepthTest;
 pub struct DepthWrite;
 pub struct DepthBounds;
-pub struct DepthCompare;
 pub struct StencilTest;
 pub struct LogicOp;
 pub struct ColorBlend;
@@ -215,6 +216,7 @@ impl GraphicsPipeline<(), (), (), (), (), ()> {
 			color_blend_state: vk::PipelineColorBlendStateCreateInfo::default(),
 			viewports: Vec::new(),
 			scissors: Vec::new(),
+			sample_mask: Box::new(!0),
 			state: PhantomData,
 		}
 	}
@@ -325,18 +327,19 @@ impl Specializations {
 	}
 }
 
-impl<T, U> From<GraphicsPipelineBuilder<T>> for GraphicsPipelineBuilder<U> {
-	fn from(builder: GraphicsPipelineBuilder<T>) -> GraphicsPipelineBuilder<U> {
+impl<T> GraphicsPipelineBuilder<T> {
+	fn into<U>(self) -> GraphicsPipelineBuilder<U> {
 		GraphicsPipelineBuilder {
-			input_assembly_state: builder.input_assembly_state,
-			tessellation_state: builder.tessellation_state,
-			viewport_state: builder.viewport_state,
-			rasterization_state: builder.rasterization_state,
-			multisample_state: builder.multisample_state,
-			depth_stencil_state: builder.depth_stencil_state,
-			color_blend_state: builder.color_blend_state,
-			viewports: builder.viewports,
-			scissors: builder.scissors,
+			input_assembly_state: self.input_assembly_state,
+			tessellation_state: self.tessellation_state,
+			viewport_state: self.viewport_state,
+			rasterization_state: self.rasterization_state,
+			multisample_state: self.multisample_state,
+			depth_stencil_state: self.depth_stencil_state,
+			color_blend_state: self.color_blend_state,
+			viewports: self.viewports,
+			scissors: self.scissors,
+			sample_mask: self.sample_mask,
 			state: PhantomData,
 		}
 	}
@@ -443,13 +446,91 @@ impl GraphicsPipelineBuilder<LineWidth> {
 impl GraphicsPipelineBuilder<SampleCount> {
 	pub fn sample_count(
 		mut self, sample_count: vk::SampleCountFlags
-	) -> GraphicsPipelineBuilder<SampleMask> {
+	) -> GraphicsPipelineBuilder<SampleShading> {
 		self.multisample_state.rasterization_samples = sample_count;
 		self.into()
 	}
 }
+impl GraphicsPipelineBuilder<SampleShading> {
+	pub fn sample_shading_enable(mut self, min: f32) -> GraphicsPipelineBuilder<SampleMask> {
+		self.multisample_state.sample_shading_enable = vk::TRUE;
+		self.multisample_state.min_sample_shading = min;
+		self.into()
+	}
+	pub fn sample_shading_disable(mut self) -> GraphicsPipelineBuilder<SampleMask> {
+		self.multisample_state.sample_shading_enable = vk::FALSE;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<SampleMask> {
+	pub fn sample_mask(mut self, mask: u32) -> GraphicsPipelineBuilder<AlphaToCoverage> {
+		*self.sample_mask = mask;
+		self.multisample_state.p_sample_mask = &*self.sample_mask as _;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<AlphaToCoverage> {
+	pub fn alpha_to_coverage_enable(mut self) -> GraphicsPipelineBuilder<AlphaToOne> {
+		self.multisample_state.alpha_to_coverage_enable = vk::TRUE;
+		self.into()
+	}
 
-impl GraphicsPipelineBuilder {
+	pub fn alpha_to_coverage_disable(mut self) -> GraphicsPipelineBuilder<AlphaToOne> {
+		self.multisample_state.alpha_to_coverage_enable = vk::FALSE;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<AlphaToOne> {
+	pub fn alpha_to_one_enable(mut self) -> GraphicsPipelineBuilder<DepthTest> {
+		self.multisample_state.alpha_to_one_enable = vk::TRUE;
+		self.into()
+	}
+
+	pub fn alpha_to_one_disable(mut self) -> GraphicsPipelineBuilder<DepthTest> {
+		self.multisample_state.alpha_to_one_enable = vk::FALSE;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<DepthTest> {
+	pub fn depth_test_enable(mut self, op: vk::CompareOp) -> GraphicsPipelineBuilder<DepthWrite> {
+		self.depth_stencil_state.depth_test_enable = vk::TRUE;
+		self.depth_stencil_state.depth_compare_op = op;
+		self.into()
+	}
+
+	pub fn depth_test_disable(mut self) -> GraphicsPipelineBuilder<DepthWrite> {
+		self.depth_stencil_state.depth_test_enable = vk::FALSE;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<DepthWrite> {
+	pub fn depth_write_enable(mut self) -> GraphicsPipelineBuilder<DepthBounds> {
+		self.depth_stencil_state.depth_write_enable = vk::TRUE;
+		self.into()
+	}
+
+	pub fn depth_write_disable(mut self) -> GraphicsPipelineBuilder<DepthBounds> {
+		self.depth_stencil_state.depth_write_enable = vk::FALSE;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<DepthBounds> {
+	pub fn depth_bounds_test_enable(
+		mut self, bounds: std::ops::Range<f32>
+	) -> GraphicsPipelineBuilder<StencilTest> {
+		self.depth_stencil_state.depth_bounds_test_enable = vk::TRUE;
+		self.depth_stencil_state.min_depth_bounds = bounds.start;
+		self.depth_stencil_state.max_depth_bounds = bounds.end;
+		self.into()
+	}
+
+	pub fn depth_bounds_test_disable(mut self) -> GraphicsPipelineBuilder<StencilTest> {
+		self.depth_stencil_state.depth_bounds_test_enable = vk::FALSE;
+		self.into()
+	}
+}
+
+impl GraphicsPipelineBuilder<()> {
 	pub fn dynamic_state_builder(&self) -> GraphicsPipelineDynamicStateBuilder<()> {
 		GraphicsPipelineDynamicStateBuilder {
 			dynamic_states: PhantomData,
@@ -468,7 +549,7 @@ impl GraphicsPipelineBuilder {
 		}
 	}
 
-	pub fn build<V, D, A, S, S0>(
+	pub fn build<P, L, V, D, A, S, S0>(
 		self,
 		shader_stages: PipelineShaderStagesBuilder<P, L>,
 		_vertex: V,
@@ -627,7 +708,7 @@ impl GraphicsPipelineBuilder {
 			p_depth_stencil_state: &depth_stencil_state as _,
 			p_color_blend_state: &color_blend_state as _,
 			p_dynamic_state: &dynamic_state as _,
-			layout: self.layout.handle,
+			layout: unimplemented!(),
 			render_pass: subpass.render_pass.handle(),
 			subpass: subpass.subpass_index,
 			base_pipeline_handle: vk::Pipeline::null(),
