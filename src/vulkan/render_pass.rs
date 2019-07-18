@@ -23,18 +23,8 @@ pub struct Subpass {
 	preserve: Vec<u32>,
 }
 
-use subpass::SubpassPipeline;
-pub mod subpass {
-	use ash::vk::PipelineBindPoint;
-	pub struct Input;
-
-	pub trait SubpassPipeline {
-		fn bind_point() -> PipelineBindPoint;
-	}
-	pub struct Graphics;
-	impl SubpassPipeline for Graphics {
-		fn bind_point() -> PipelineBindPoint { PipelineBindPoint::GRAPHICS }
-	}
+pub struct Subpasss {
+	color_attachments: usize,
 }
 
 pub struct VkRenderPassBuilderAttachments<A> {
@@ -203,40 +193,37 @@ impl<A, S> VkRenderPassBuilderSubpasses<A, S> {
 		_pipeline_bind_point: P,
 		color: Vec<vk::AttachmentReference>,
 		resolve: Vec<vk::AttachmentReference>,
+		input: Vec<vk::AttachmentReference>,
 		depth_stencil: Option<Box<vk::AttachmentReference>>,
 		preserve: Vec<u32>,
-	) -> VkRenderPassBuilderSubpasses<A, (S, P)> where P: SubpassPipeline {
+	) -> VkRenderPassBuilderSubpasses<A, (S, P)> where P: pipeline::PipelineBindPoint {
 		let (depth_stencil, depth_stencil_pointer) = match depth_stencil {
 			Some(reference) => {
 				debug_assert!((reference.attachment as usize) < self.attachments.len());
 
-				let pointer = Box::into_raw(reference);
-				let depth_stencil_pointer = pointer as *const _;
-
-				let depth_stencil = unsafe { Box::from_raw(pointer) };
-
-				(Some(depth_stencil), depth_stencil_pointer)
+				let depth_stencil_pointer = &*reference as *const _;
+				(Some(reference), depth_stencil_pointer)
 			},
 			None => (None, ptr::null()),
 		};
 
-		color
-			.iter()
+		color.iter()
 			.for_each(|reference| {
 				debug_assert!((reference.attachment as usize) < self.attachments.len());
 			});
 
-		resolve
-			.iter()
+		resolve.iter()
 			.for_each(|reference| {
 				debug_assert!((reference.attachment as usize) < self.attachments.len());
 			});
 
-		preserve
-			.iter()
+		input.iter()
+			.for_each(|reference| {
+				debug_assert!((reference.attachment as usize) < self.attachments.len());
+			});
+
+		preserve.iter()
 			.for_each(|index| debug_assert!((*index as usize) < self.attachments.len()));
-
-		let input = Vec::new();
 
 		let description = vk::SubpassDescription {
 			flags: vk::SubpassDescriptionFlags::empty(),
@@ -244,7 +231,7 @@ impl<A, S> VkRenderPassBuilderSubpasses<A, S> {
 			color_attachment_count: color.len() as u32,
 			p_color_attachments: color.as_ptr(),
 			p_resolve_attachments: if resolve.len() != 0 { resolve.as_ptr() } else { ptr::null() },
-			input_attachment_count: 0,
+			input_attachment_count: input.len() as u32,
 			p_input_attachments: input.as_ptr(),
 			p_depth_stencil_attachment: depth_stencil_pointer,
 			preserve_attachment_count: preserve.len() as u32,
@@ -263,26 +250,9 @@ impl<A, S> VkRenderPassBuilderSubpasses<A, S> {
 		}
 	}
 }
-impl<A, S, I> VkRenderPassBuilderSubpasses<A, (S, I)> {
-	pub fn input(
-		mut self,
-		input: vk::AttachmentReference,
-	) -> VkRenderPassBuilderSubpasses<A, (S, (I, shader::descriptor::ty::InputAttachment))> {
-		self.subpasses.last_mut().unwrap().input.push(input);
-		let description = self.descriptions.last_mut().unwrap();
-		description.input_attachment_count += 1;
-
-		VkRenderPassBuilderSubpasses {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-			descriptions: self.descriptions,
-			subpasses: self.subpasses,
-			_subpasses: PhantomData,
-		}
-	}
-
+impl<A, S1, S2> VkRenderPassBuilderSubpasses<A, (S1, S2)> {
 	// NOTE: Implementing here enforce that this render pass has at least one subpass.
-	pub fn dependencies(self) -> VkRenderPassBuilderDependencies<A, (S, I)> {
+	pub fn dependencies(self) -> VkRenderPassBuilderDependencies<A, (S1, S2)> {
 		VkRenderPassBuilderDependencies {
 			attachments: self.attachments,
 			_attachments: PhantomData,

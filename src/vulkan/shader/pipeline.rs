@@ -1,10 +1,13 @@
 pub mod stage;
 pub mod dynamic_state;
+pub mod bind_point;
+
+pub use bind_point::PipelineBindPoint;
+pub use dynamic_state::DynamicState;
 
 use super::*;
 use super::stage::OneShaderStage;
 use super::descriptor::DescriptorSetLayout;
-use dynamic_state::DynamicState;
 
 pub struct PipelineLayout<P, L> {
 	device: Arc<Device>,
@@ -15,11 +18,14 @@ pub struct PipelineLayout<P, L> {
 
 pub struct PipelineLayoutBuilderPushConstants<P> {
 	ranges: Vec<vk::PushConstantRange>,
-	offset: u32,
-	push_constants: PhantomData<fn() -> P>,
+	push_constants: P,
 }
 
-pub struct PushConstant<T>(PhantomData<fn() -> T>);
+pub struct PushConstant<S, T> {
+	shader_stages: PhantomData<S>,
+	data_type: PhantomData<fn() -> T>,
+}
+
 
 pub struct PipelineLayoutBuilderSetLayout<P, H, L> {
 	push_constant_ranges: Vec<vk::PushConstantRange>,
@@ -93,9 +99,9 @@ pub struct DepthTest;
 pub struct DepthWrite;
 pub struct DepthBounds;
 pub struct StencilTest;
-pub struct LogicOp;
-pub struct ColorBlend;
+pub struct LogicOpOrColorBlend;
 pub struct BlendConstant;
+pub struct ReadyToBuild;
 
 pub struct GraphicsPipelineDynamicStateBuilder<D> {
 	dynamic_states: PhantomData<D>,
@@ -113,42 +119,42 @@ impl PipelineLayout<(), ()> {
 	pub fn builder() -> PipelineLayoutBuilderPushConstants<()> {
 		PipelineLayoutBuilderPushConstants {
 			ranges: Vec::new(),
-			offset: 0,
-			push_constants: PhantomData,
+			push_constants: (),
 		}
 	}
 }
+
 
 impl<P, L> Drop for PipelineLayout<P, L> {
 	fn drop(&mut self) { unsafe { self.device.handle.destroy_pipeline_layout(self.handle, None) } }
 }
 
 impl<P> PipelineLayoutBuilderPushConstants<P> {
-	pub fn push_constant<T, S>(
+	pub fn push_constant<S, T>(
 		mut self,
-		data_type: PushConstant<T>,
 		stage: S,
-	) -> PipelineLayoutBuilderPushConstants<(P, T)> where S: OneShaderStage {
-		let align = std::mem::align_of::<T>() as u32;
-		let offset = if self.offset % align == 0 {
-			self.offset
-		} else {
-			align * (self.offset / align + 1)
-		};
+		data_type: PhantomData<T>,
+	) -> PipelineLayoutBuilderPushConstants<(P, PushConstant<S, T>)>
+		where S: shader::stage::ShaderStages
+	{
+		let size = std::mem::size_of::<T>() as u32;
+		let size = if size % 4 != 0 { (size / 4 + 1) * 4 } else { size };
 
 		let push_constant = vk::PushConstantRange {
 			stage_flags: S::shader_stages(),
-			offset,
-			size: std::mem::size_of::<T>() as u32,
+			offset: 0,
+			size,
+		};
+		self.ranges.push(push_constant);
+
+		let push_constant = PushConstant {
+			shader_stages: PhantomData,
+			data_type: PhantomData,
 		};
 
-		println!("size: {}", std::mem::size_of::<T>());
-
-		self.ranges.push(push_constant);
 		PipelineLayoutBuilderPushConstants {
 			ranges: self.ranges,
-			offset: offset + std::mem::size_of::<T>() as u32,
-			push_constants: PhantomData,
+			push_constants: (self.push_constants, push_constant),
 		}
 	}
 
@@ -161,10 +167,6 @@ impl<P> PipelineLayoutBuilderPushConstants<P> {
 			set_layouts: PhantomData,
 		}
 	}
-}
-
-impl PushConstant<()> {
-	pub fn new<T>() -> PushConstant<T> { PushConstant(PhantomData) }
 }
 
 impl<P, H, L> PipelineLayoutBuilderSetLayout<P, H, L> {
@@ -220,9 +222,35 @@ impl GraphicsPipeline<(), (), (), (), (), ()> {
 			state: PhantomData,
 		}
 	}
+
+	pub fn dynamic_state_builder(&self) -> GraphicsPipelineDynamicStateBuilder<()> {
+		GraphicsPipelineDynamicStateBuilder {
+			dynamic_states: PhantomData,
+			dynamic_statess: Vec::new(),
+		}
+	}
+
+	pub fn subpass_selecter<A, S>(
+		&self,
+		render_pass: Arc<render_pass::RenderPass<A, S>>,
+	) -> GraphicsPipelineSubpassSelecter<A, S, S> {
+		GraphicsPipelineSubpassSelecter {
+			subpass_index: render_pass.subpass_count() - 1,
+			render_pass,
+			subpass: PhantomData,
+		}
+	}
+}
+
+impl<A, S, P, L, V, D> GraphicsPipeline<A, S, P, L, V, D> {
+	#[inline]
+	pub fn handle(&self) -> vk::Pipeline { self.handle }
+	#[inline]
+	pub fn layout(&self) -> vk::PipelineLayout { self.layout.handle }
 }
 
 impl<A, S, P, L, V, D> Drop for GraphicsPipeline<A, S, P, L, V, D> {
+	#[inline]
 	fn drop(&mut self) {
 		unsafe { self.layout.device.handle.destroy_pipeline(self.handle, None); }
 	}
@@ -529,163 +557,45 @@ impl GraphicsPipelineBuilder<DepthBounds> {
 		self.into()
 	}
 }
-
-impl GraphicsPipelineBuilder<()> {
-	pub fn dynamic_state_builder(&self) -> GraphicsPipelineDynamicStateBuilder<()> {
-		GraphicsPipelineDynamicStateBuilder {
-			dynamic_states: PhantomData,
-			dynamic_statess: Vec::new(),
-		}
+impl GraphicsPipelineBuilder<StencilTest> {
+	pub fn stencil_test_enable(
+		mut self, front: vk::StencilOpState, back: vk::StencilOpState
+	) -> GraphicsPipelineBuilder<LogicOpOrColorBlend> {
+		self.depth_stencil_state.stencil_test_enable = vk::TRUE;
+		self.depth_stencil_state.front = front;
+		self.depth_stencil_state.back = back;
+		self.into()
 	}
 
-	pub fn subpass_selecter<A, S>(
-		&self,
-		render_pass: Arc<render_pass::RenderPass<A, S>>,
-	) -> GraphicsPipelineSubpassSelecter<A, S, S> {
-		GraphicsPipelineSubpassSelecter {
-			subpass_index: render_pass.subpass_count() - 1,
-			render_pass,
-			subpass: PhantomData,
-		}
+	pub fn stencil_test_disable(mut self) -> GraphicsPipelineBuilder<LogicOpOrColorBlend> {
+		self.depth_stencil_state.stencil_test_enable = vk::FALSE;
+		self.into()
+	}
+}
+impl GraphicsPipelineBuilder<LogicOpOrColorBlend> {
+	pub fn logic_op_enable(mut self, op: vk::LogicOp) -> GraphicsPipelineBuilder<ReadyToBuild> {
+		self.color_blend_state.logic_op_enable = vk::TRUE;
+		self.color_blend_state.logic_op = op;
+		self.into()
 	}
 
-	pub fn build<P, L, V, D, A, S, S0>(
-		self,
+	pub fn color_blend(
+		mut self, attachments: Vec<vk::PipelineColorBlendAttachmentState>
+	) -> GraphicsPipelineBuilder<ReadyToBuild> {
+		self.color_blend_state.attachment_count = attachments.len() as u32;
+		self.color_blend_state.p_attachments = attachments.as_ptr();
+		self.into()
+	}
+}
+
+impl GraphicsPipelineBuilder<ReadyToBuild> {
+	pub fn build<P, L, D, A, S, S1, V>(
+		mut self,
 		shader_stages: PipelineShaderStagesBuilder<P, L>,
-		_vertex: V,
-		(primitive_topology, primitive_restart): (vk::PrimitiveTopology, vk::Bool32),
-		patch_control_points: Option<u32>,
-		viewport: vk::Viewport,
-		scissor: vk::Rect2D,
-		rasterizer_discard: vk::Bool32,
-		polygon_mode: vk::PolygonMode,
-		cull_mode: vk::CullModeFlags,
-		front_face: vk::FrontFace,
-		depth_clamp: vk::Bool32,
-		depth_bias: Option<(f32, f32, f32)>,
-		line_width: Option<f32>,
-		sample_count: vk::SampleCountFlags,
-		sample_shading: Option<f32>,
-		sample_mask: Option<u32>,
-		alpha: (vk::Bool32, vk::Bool32),
-		depth_test: vk::Bool32,
-		depth_write: vk::Bool32,
-		depth_bounds: Option<std::ops::Range<f32>>,
-		depth_compare: vk::CompareOp,
-		stencil_test: Option<(vk::StencilOpState, vk::StencilOpState)>,
-		logic_op: Option<vk::LogicOp>,
-		color_blend_attachments: Vec<vk::PipelineColorBlendAttachmentState>,
-		blend_constants: Option<[f32; 4]>,
 		dynamic_state: GraphicsPipelineDynamicStateBuilder<D>,
-		subpass: GraphicsPipelineSubpassSelecter<A, S, S0>,
-	) {
-		let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
-			s_type: vk::StructureType::PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineInputAssemblyStateCreateFlags::empty(),
-			topology: primitive_topology,
-			primitive_restart_enable: primitive_restart,
-		};
-
-		let tessellation_state = patch_control_points.map(|p| {
-			vk::PipelineTessellationStateCreateInfo {
-				s_type: StructureType::PIPELINE_TESSELLATION_STATE_CREATE_INFO,
-				p_next: ptr::null(),
-				flags: vk::PipelineTessellationStateCreateFlags::empty(),
-				patch_control_points: p,
-			}
-		});
-
-		let viewport_state = vk::PipelineViewportStateCreateInfo {
-			s_type: StructureType::PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineViewportStateCreateFlags::empty(),
-			viewport_count: 1,
-			p_viewports: &viewport as _,
-			scissor_count: 1,
-			p_scissors: &scissor as _,
-		};
-
-		let (depth_bias, constant, clamp, slope) = match depth_bias {
-			Some((a, b, c)) => (vk::TRUE, a, b, c),
-			None => (vk::FALSE, 0.0, 0.0, 0.0),
-		};
-
-		let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
-			s_type: StructureType::PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineRasterizationStateCreateFlags::empty(),
-			rasterizer_discard_enable: rasterizer_discard,
-			polygon_mode,
-			cull_mode,
-			front_face,
-			depth_clamp_enable: depth_clamp,
-			depth_bias_enable: depth_bias,
-			depth_bias_constant_factor: constant,
-			depth_bias_clamp: clamp,
-			depth_bias_slope_factor: slope,
-			line_width: line_width.unwrap_or(1.0),
-		};
-
-		let (sample_shading, min_sample_shading) = match sample_shading {
-			Some(min) => (vk::TRUE, min),
-			None => (vk::FALSE, 0.0),
-		};
-
-		let multisample_state = vk::PipelineMultisampleStateCreateInfo {
-			s_type: StructureType::PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineMultisampleStateCreateFlags::empty(),
-			rasterization_samples: sample_count,
-			sample_shading_enable: sample_shading,
-			min_sample_shading,
-			p_sample_mask: sample_mask.as_ref().map(|r| r as _).unwrap_or(ptr::null()),
-			alpha_to_coverage_enable: alpha.0,
-			alpha_to_one_enable: alpha.1,
-		};
-
-		let (depth_bounds, min_depth, max_depth) = match depth_bounds {
-			Some(range) => (vk::TRUE, range.start, range.end),
-			None => (vk::FALSE, 0.0, 0.0),
-		};
-
-		let (stencil_test, front, back) = match stencil_test {
-			Some((front, back)) => (vk::TRUE, front, back),
-			None => (vk::FALSE, vk::StencilOpState::default(), vk::StencilOpState::default()),
-		};
-
-		let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
-			s_type: StructureType::PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineDepthStencilStateCreateFlags::empty(),
-			depth_test_enable: depth_test,
-			depth_write_enable: depth_write,
-			depth_compare_op: depth_compare,
-			depth_bounds_test_enable: depth_bounds,
-			min_depth_bounds: min_depth,
-			max_depth_bounds: max_depth,
-			stencil_test_enable: stencil_test,
-			front,
-			back,
-		};
-
-		let (logic_op, op) = match logic_op {
-			Some(op) => (vk::TRUE, op),
-			None => (vk::FALSE, vk::LogicOp::CLEAR),
-		};
-
-		let color_blend_state = vk::PipelineColorBlendStateCreateInfo {
-			s_type: StructureType::PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-			p_next: ptr::null(),
-			flags: vk::PipelineColorBlendStateCreateFlags::empty(),
-			logic_op_enable: logic_op,
-			logic_op: op,
-			attachment_count: color_blend_attachments.len() as u32,
-			p_attachments: color_blend_attachments.as_ptr(),
-			blend_constants: blend_constants.unwrap_or([0.0; 4]),
-		};
-
-		let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+		subpass: GraphicsPipelineSubpassSelecter<A, S, S1>,
+	) -> GraphicsPipeline<A, S, P, L, V, D> {
+		let dynamic_state_info = vk::PipelineDynamicStateCreateInfo {
 			s_type: StructureType::PIPELINE_DYNAMIC_STATE_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::PipelineDynamicStateCreateFlags::empty(),
@@ -700,20 +610,35 @@ impl GraphicsPipelineBuilder<()> {
 			stage_count: shader_stages.shader_stages.len() as u32,
 			p_stages: shader_stages.shader_stages.as_ptr(),
 			p_vertex_input_state: unimplemented!(),
-			p_input_assembly_state: &input_assembly_state as _,
-			p_tessellation_state: tessellation_state.as_ref().map(|t| t as _).unwrap_or(ptr::null()),
-			p_viewport_state: &viewport_state as _,
-			p_rasterization_state: &rasterization_state as _,
-			p_multisample_state: &multisample_state as _,
-			p_depth_stencil_state: &depth_stencil_state as _,
-			p_color_blend_state: &color_blend_state as _,
-			p_dynamic_state: &dynamic_state as _,
-			layout: unimplemented!(),
+			p_input_assembly_state: &self.input_assembly_state as _,
+			p_tessellation_state: &self.tessellation_state as _,
+			p_viewport_state: &self.viewport_state as _,
+			p_rasterization_state: &self.rasterization_state as _,
+			p_multisample_state: &self.multisample_state as _,
+			p_depth_stencil_state: &self.depth_stencil_state as _,
+			p_color_blend_state: &self.color_blend_state as _,
+			p_dynamic_state: &dynamic_state_info as _,
+			layout: shader_stages.layout.handle,
 			render_pass: subpass.render_pass.handle(),
 			subpass: subpass.subpass_index,
 			base_pipeline_handle: vk::Pipeline::null(),
 			base_pipeline_index: -1,
 		};
+
+		let handle = unsafe {
+			shader_stages.layout.device.handle
+				.create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)
+				.unwrap()[0]
+
+		};
+
+		GraphicsPipeline {
+			handle,
+			layout: shader_stages.layout,
+			render_pass: subpass.render_pass,
+			vertex_or_mesh: PhantomData,
+			dynamic_states: PhantomData,
+		}
 	}
 }
 

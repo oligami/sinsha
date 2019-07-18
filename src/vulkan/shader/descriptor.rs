@@ -3,28 +3,8 @@ pub mod ty;
 use super::*;
 
 pub use ty::DescriptorType;
-
 use stage::ShaderStages;
 
-/// Used for get length of a descriptor array.
-pub trait DescriptorArray {
-	type Type: DescriptorType;
-	fn len() -> u32;
-}
-
-macro_rules! impl_array_length {
-	($($len: expr),*) => {$(
-		impl<T> DescriptorArray for [T; $len] where T: DescriptorType {
-			type Type = T;
-			fn len() -> u32 { $len as u32 }
-		}
-	)*};
-}
-
-impl_array_length!(
-	1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-	17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32
-);
 
 pub struct DescriptorSetLayout<T> {
 	device: Arc<Device>,
@@ -77,19 +57,19 @@ impl<L> Drop for DescriptorSetLayout<L> {
 }
 
 impl<T> DescriptorSetLayoutBuilder<T> {
-	pub fn binding<D, S>(
+	pub fn binding<A, D, S>(
 		mut self,
-		descriptor_array: D,
+		descriptor_array: A,
 		shader_stages: S,
 		// reserve for future use.
 		_immutable_samplers: (),
-	) -> DescriptorSetLayoutBuilder<(T, D)>
-		where D: DescriptorArray, S: ShaderStages
+	) -> DescriptorSetLayoutBuilder<(T, A)>
+		where A: Array<D>, D: DescriptorType, S: ShaderStages
 	{
 		let binding = vk::DescriptorSetLayoutBinding {
 			binding: self.binding_index,
-			descriptor_type: D::Type::descriptor_type(),
-			descriptor_count: D::len(),
+			descriptor_type: D::descriptor_type(),
+			descriptor_count: A::len() as u32,
 			stage_flags: S::shader_stages(),
 			p_immutable_samplers: ptr::null(),
 		};
@@ -168,13 +148,11 @@ impl DescriptorPoolBuilder<()> {
 	}
 }
 
-impl<T1, T2> DescriptorPoolBuilder<(T1, T2)>
-	where T2: DescriptorArray,
-{
-	pub fn pool_size(mut self) -> DescriptorPoolBuilder<T1> {
+impl<L, A> DescriptorPoolBuilder<(L, A)> {
+	pub fn pool_size<T>(mut self) -> DescriptorPoolBuilder<L> where A: Array<T>, T: DescriptorType {
 		let pool_size = vk::DescriptorPoolSize {
-			ty: T2::Type::descriptor_type(),
-			descriptor_count: T2::len(),
+			ty: T::descriptor_type(),
+			descriptor_count: A::len() as u32,
 		};
 
 		self.pool_sizes.push(pool_size);
@@ -209,5 +187,21 @@ impl<L> DescriptorSet<L> {
 			.zip(layouts.iter())
 			.map(|(handle, layout)| Self { handle, layout: layout.clone(), pool: pool.clone() })
 			.collect()
+	}
+
+	pub fn write(set: Self, ) {
+		let write_info = vk::WriteDescriptorSet {
+			s_type: StructureType::WRITE_DESCRIPTOR_SET,
+			p_next: ptr::null(),
+			dst_set: vk::DescriptorSet::null(),
+			dst_binding: 0,
+			dst_array_element: 0,
+			descriptor_count: 1,
+			descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+			p_buffer_info: ptr::null(),
+			p_image_info: ptr::null(),
+			p_texel_buffer_view: ptr::null(),
+		};
+
 	}
 }

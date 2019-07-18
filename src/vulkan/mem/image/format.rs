@@ -2,6 +2,7 @@
 #![allow(non_camel_case_types)]
 
 use ash::vk::Format as VkFormat;
+use ash::vk::FormatFeatureFlags;
 
 pub trait Format {
 	fn format() -> VkFormat;

@@ -72,13 +72,14 @@ pub fn run_kai(
 		)
 		.subpasses()
 		.subpass(
-			render_pass::subpass::Graphics,
+			render_pass::bind_point::Graphics,
 			vec![
 				vk::AttachmentReference {
 					attachment: 0,
 					layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
 				}
 			],
+			vec![],
 			vec![],
 			None,
 			vec![],
@@ -135,8 +136,8 @@ pub fn run_kai(
 
 	let pipeline_layout = shader::pipeline::PipelineLayout::builder()
 		.push_constant(
-			shader::pipeline::PushConstant::new::<RGBA>(),
-			shader::stage::Vertex(shader::stage::Empty)
+			shader::stage::Vertex(shader::stage::Empty),
+			std::marker::PhantomData::<RGBA>,
 		)
 		.descriptor_set_layout()
 		.set_layout(descriptor_set_layout.clone())
@@ -158,7 +159,16 @@ pub fn run_kai(
 		.depth_clamp_disable()
 		.depth_bias_disable()
 		.line_width(1.0)
-		.sample_count(vk::SampleCountFlags::TYPE_1);
+		.sample_count(vk::SampleCountFlags::TYPE_1)
+		.sample_shading_disable()
+		.sample_mask(!0)
+		.alpha_to_coverage_disable()
+		.alpha_to_one_disable()
+		.depth_test_disable()
+		.depth_write_disable()
+		.depth_bounds_test_disable()
+		.stencil_test_disable()
+		.color_blend(vec![]); // color_blend_attachments must match subpass color attachments
 }
 
 

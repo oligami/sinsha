@@ -1,10 +1,22 @@
+//! # About This Module
+//! This module is wrapper of Vulkan API.
+//!
+//! # Wrapping Policy
+//! This wrapper is not for safety. It's make only easy to use.
+
 pub mod mem;
 pub mod render_pass;
 pub mod swapchain;
 pub mod framebuffer;
 pub mod shader;
+pub mod command;
+pub mod utility;
 
 pub use self::mem::alloc;
+pub use shader::pipeline;
+pub use shader::descriptor;
+
+use utility::Array;
 
 use ash::vk;
 use ash::vk::StructureType;
@@ -51,7 +63,8 @@ pub trait Destroy: Sized {
 	/// Almost all objects are used in std::sync::Arc.
 	/// If strong count of Arc is not 1, this method will fail to destroying and return error.
 	/// If strong count of Arc is 1, then self will be destroyed.
-	/// This method is just for convenience.
+	/// This method is just for convenience and is unsafe because it's doesn't check command
+	/// buffer usage.
 	unsafe fn try_destroy(self: Arc<Self>) -> Result<Self::Ok, DestroyError<Self::Error>> {
 		let obj = Arc::try_unwrap(self).map_err(|_| DestroyError::NonZeroStrongCount)?;
 		obj.destroy().map_err(|e| DestroyError::Specific(e))
@@ -373,5 +386,10 @@ impl Destroy for Device {
 	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
 		self.handle.destroy_device(None);
 		Ok(())
+	}
+}
+
+impl<T> Queue<T> {
+	pub fn submit(&mut self, submit_config: ()) {
 	}
 }
