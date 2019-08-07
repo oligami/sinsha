@@ -1,21 +1,34 @@
 use super::*;
-use super::mem::image::*;
 
-
-pub struct RenderPass<A, S> {
-	device: Arc<Device>,
+pub struct RenderPass<I, D>
+    where I: Borrow<Instance> + Deref<Target = Instance>,
+          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+{
+	_instance: PhantomData<I>,
+	device: D,
 	handle: vk::RenderPass,
-	attachments: PhantomData<A>,
-	subpasses: PhantomData<S>,
-	subpass_count: u32,
+	attachments: Vec<Attachment>,
+	subpasses: Vec<Subpass>,
 }
 
-pub struct Attachment<F, S> where F: Format, S: SampleCount {
-	_format: PhantomData<F>,
-	_sample_count: PhantomData<S>,
+pub trait RenderPassAbs {
+	type Instance: Borrow<Instance> + Deref<Target = Instance>;
+	type Device: Borrow<Device<Self::Instance>> + Deref<Target = Device<Self::Instance>>;
+
+	fn instance(&self) -> &Instance;
+	fn device(&self) -> &Device<Self::Instance>;
+	fn handle(&self) -> vk::RenderPass;
+	fn attachments(&self) -> &[Attachment];
+	fn subpasses(&self) -> &[Subpass];
+}
+
+pub struct Attachment {
+	format: vk::Format,
+	samples: vk::SampleCountFlags,
 }
 
 pub struct Subpass {
+	pipeline_bind_point: vk::PipelineBindPoint,
 	input: Vec<vk::AttachmentReference>,
 	color: Vec<vk::AttachmentReference>,
 	resolve: Vec<vk::AttachmentReference>,
@@ -27,48 +40,53 @@ pub struct Subpasss {
 	color_attachments: usize,
 }
 
-pub struct VkRenderPassBuilderAttachments<A> {
-	attachments: Vec<vk::AttachmentDescription>,
-	_attachments: PhantomData<A>,
-}
-
-pub struct VkRenderPassBuilderSubpasses<A, S> {
-	attachments: Vec<vk::AttachmentDescription>,
-	_attachments: PhantomData<A>,
-	descriptions: Vec<vk::SubpassDescription>,
+pub struct AttachmentState;
+pub struct SubpassState;
+pub struct DependencyState;
+pub struct ReadyToBuild;
+pub struct RenderPassBuilder<S> {
+	attachments: Vec<Attachment>,
+	attachment_descriptions: Vec<vk::AttachmentDescription>,
 	subpasses: Vec<Subpass>,
-	_subpasses: PhantomData<S>,
+	subpass_descriptions: Vec<vk::SubpassDescription>,
+	subpass_dependencies: Vec<vk::SubpassDependency>,
+	_state: PhantomData<S>,
 }
 
-pub struct VkRenderPassBuilderDependencies<A, S> {
-	attachments: Vec<vk::AttachmentDescription>,
-	_attachments: PhantomData<A>,
-	description: Vec<vk::SubpassDescription>,
-	subpasses: Vec<Subpass>,
-	_subpasses: PhantomData<S>,
-	dependencies: Vec<vk::SubpassDependency>,
-}
-
-impl RenderPass<(), ()> {
-	pub fn builder() -> VkRenderPassBuilderAttachments<()> {
-		VkRenderPassBuilderAttachments {
+impl RenderPass<&'static Instance, &'static Device<&'static Instance>> {
+	pub fn builder() -> RenderPassBuilder<AttachmentState> {
+		RenderPassBuilder {
 			attachments: Vec::new(),
-			_attachments: PhantomData,
+			attachment_descriptions: Vec::new(),
+			subpasses: Vec::new(),
+			subpass_descriptions: Vec::new(),
+			subpass_dependencies: Vec::new(),
+			_state: PhantomData,
 		}
 	}
 }
-impl<A, S> RenderPass<A, S> {
-	#[inline]
-	pub fn device(&self) -> &Arc<Device> { &self.device }
 
-	#[inline]
-	pub fn handle(&self) -> vk::RenderPass { self.handle }
+impl<I, D> RenderPassAbs for RenderPass<I, D>
+    where I: Borrow<Instance> + Deref<Target = Instance>,
+          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+{
+	type Instance = I;
+	type Device = D;
 
-	#[inline]
-	pub fn subpass_count(&self) -> u32 { self.subpass_count }
+    #[inline]
+	fn instance(&self) -> &Instance { &self.device.instance }
+    #[inline]
+	fn device(&self) -> &Device<Self::Instance> { &self.device }
+    #[inline]
+	fn handle(&self) -> vk::RenderPass { self.handle }
+    #[inline]
+	fn attachments(&self) -> &[Attachment] { &self.attachments[..] }
+    #[inline]
+	fn subpasses(&self) -> &[Subpass] { &self.subpasses[..] }
 }
 
-impl<A, S> Destroy for RenderPass<A, S> {
+impl<I, D> Destroy for RenderPass<I, D> where I: Borrow<Instance> + Deref<Target = Instance>,
+                                              D: Borrow<Device<I>> + Deref<Target = Device<I>>, {
 	type Ok = ();
 	type Error = Infallible;
 	unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
@@ -77,23 +95,47 @@ impl<A, S> Destroy for RenderPass<A, S> {
 	}
 }
 
-impl<A> VkRenderPassBuilderAttachments<A> {
-	pub fn color_attachment<F, S>(
+impl<I, D> Drop for RenderPass<I, D> where I: Borrow<Instance> + Deref<Target = Instance>,
+                                           D: Borrow<Device<I>> + Deref<Target = Device<I>>, {
+	fn drop(&mut self) {
+		unsafe {
+			self.device.handle.destroy_render_pass(self.handle, None);
+		}
+	}
+}
+
+impl Attachment {
+	pub fn format(&self) -> vk::Format { self.format }
+	pub fn samples(&self) -> vk::SampleCountFlags { self.samples }
+}
+
+impl<S1> RenderPassBuilder<S1> {
+	fn into<S2>(self) -> RenderPassBuilder<S2> {
+		RenderPassBuilder {
+			attachments: self.attachments,
+			attachment_descriptions: self.attachment_descriptions,
+			subpasses: self.subpasses,
+			subpass_descriptions: self.subpass_descriptions,
+			subpass_dependencies: self.subpass_dependencies,
+			_state: PhantomData,
+		}
+	}
+}
+
+impl RenderPassBuilder<AttachmentState> {
+	pub fn color_attachment(
 		mut self,
-		_format: F,
-		_sample_count: S,
+		format: vk::Format,
+		samples: vk::SampleCountFlags,
 		load_op: vk::AttachmentLoadOp,
 		store_op: vk::AttachmentStoreOp,
 		initial_layout: vk::ImageLayout,
 		final_layout: vk::ImageLayout,
-	) -> VkRenderPassBuilderAttachments<(A, Attachment<F, S>)>
-		where F: Format,
-			  S: SampleCount
-	{
+	) -> Self {
 		let description = vk::AttachmentDescription {
 			flags: vk::AttachmentDescriptionFlags::empty(),
-			format: F::format(),
-			samples: S::sample_count(),
+			format,
+			samples,
 			load_op,
 			store_op,
 			stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
@@ -102,32 +144,27 @@ impl<A> VkRenderPassBuilderAttachments<A> {
 			final_layout,
 		};
 
-		self.attachments.push(description);
+		self.attachments.push(Attachment { format, samples });
+		self.attachment_descriptions.push(description);
 
-		VkRenderPassBuilderAttachments {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-		}
+		self
 	}
 
-	pub fn depth_stencil_attachment<F, S>(
+	pub fn depth_stencil_attachment(
 		mut self,
-		_format: F,
-		_sample_count: S,
+		format: vk::Format,
+		samples: vk::SampleCountFlags,
 		load_op: vk::AttachmentLoadOp,
 		store_op: vk::AttachmentStoreOp,
 		stencil_load_op: vk::AttachmentLoadOp,
 		stencil_store_op: vk::AttachmentStoreOp,
 		initial_layout: vk::ImageLayout,
 		final_layout: vk::ImageLayout,
-	) -> VkRenderPassBuilderAttachments<(A, Attachment<F, S>)>
-		where F: DepthFormat + StencilFormat,
-			  S: SampleCount,
-	{
+	) -> Self {
 		let description = vk::AttachmentDescription {
 			flags: vk::AttachmentDescriptionFlags::empty(),
-			format: F::format(),
-			samples: S::sample_count(),
+			format,
+			samples,
 			load_op,
 			store_op,
 			stencil_load_op,
@@ -136,30 +173,25 @@ impl<A> VkRenderPassBuilderAttachments<A> {
 			final_layout,
 		};
 
-		self.attachments.push(description);
+		self.attachments.push(Attachment { format, samples });
+		self.attachment_descriptions.push(description);
 
-		VkRenderPassBuilderAttachments {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-		}
+		self
 	}
 
-	pub fn stencil_attachment<F, S>(
+	pub fn stencil_attachment(
 		mut self,
-		_format: F,
-		_sample_count: S,
+		format: vk::Format,
+		samples: vk::SampleCountFlags,
 		load_op: vk::AttachmentLoadOp,
 		store_op: vk::AttachmentStoreOp,
 		initial_layout: vk::ImageLayout,
 		final_layout: vk::ImageLayout,
-	) -> VkRenderPassBuilderAttachments<(A, Attachment<F, S>)>
-		where F: StencilFormat,
-			  S: SampleCount,
-	{
+	) -> Self {
 		let description = vk::AttachmentDescription {
 			flags: vk::AttachmentDescriptionFlags::empty(),
-			format: F::format(),
-			samples: S::sample_count(),
+			format,
+			samples,
 			load_op: vk::AttachmentLoadOp::DONT_CARE,
 			store_op: vk::AttachmentStoreOp::DONT_CARE,
 			stencil_load_op: load_op,
@@ -168,66 +200,53 @@ impl<A> VkRenderPassBuilderAttachments<A> {
 			final_layout,
 		};
 
-		self.attachments.push(description);
+		self.attachments.push(Attachment { format, samples });
+		self.attachment_descriptions.push(description);
 
-		VkRenderPassBuilderAttachments {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-		}
+		self
 	}
 
-	pub fn subpasses(self) -> VkRenderPassBuilderSubpasses<A, ()> {
-		VkRenderPassBuilderSubpasses {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-			subpasses: Vec::new(),
-			descriptions: Vec::new(),
-			_subpasses: PhantomData,
-		}
-	}
+	pub fn subpasses(self) -> RenderPassBuilder<SubpassState> { self.into() }
 }
 
-impl<A, S> VkRenderPassBuilderSubpasses<A, S> {
-	pub fn subpass<P>(
+impl RenderPassBuilder<SubpassState> {
+	pub fn subpass(
 		mut self,
-		_pipeline_bind_point: P,
+		pipeline_bind_point: vk::PipelineBindPoint,
 		color: Vec<vk::AttachmentReference>,
 		resolve: Vec<vk::AttachmentReference>,
 		input: Vec<vk::AttachmentReference>,
 		depth_stencil: Option<Box<vk::AttachmentReference>>,
 		preserve: Vec<u32>,
-	) -> VkRenderPassBuilderSubpasses<A, (S, P)> where P: pipeline::PipelineBindPoint {
-		let (depth_stencil, depth_stencil_pointer) = match depth_stencil {
-			Some(reference) => {
-				debug_assert!((reference.attachment as usize) < self.attachments.len());
-
-				let depth_stencil_pointer = &*reference as *const _;
-				(Some(reference), depth_stencil_pointer)
-			},
-			None => (None, ptr::null()),
-		};
+	) -> Self {
+		let depth_stencil_pointer = depth_stencil.as_ref()
+			.map(|reference| {
+				assert!((reference.attachment as usize) < self.attachments.len());
+				&**reference as *const _
+			})
+			.unwrap_or(ptr::null());
 
 		color.iter()
 			.for_each(|reference| {
-				debug_assert!((reference.attachment as usize) < self.attachments.len());
+				assert!((reference.attachment as usize) < self.attachments.len());
 			});
 
 		resolve.iter()
 			.for_each(|reference| {
-				debug_assert!((reference.attachment as usize) < self.attachments.len());
+				assert!((reference.attachment as usize) < self.attachments.len());
 			});
 
 		input.iter()
 			.for_each(|reference| {
-				debug_assert!((reference.attachment as usize) < self.attachments.len());
+				assert!((reference.attachment as usize) < self.attachments.len());
 			});
 
 		preserve.iter()
-			.for_each(|index| debug_assert!((*index as usize) < self.attachments.len()));
+			.for_each(|index| assert!((*index as usize) < self.attachments.len()));
 
 		let description = vk::SubpassDescription {
 			flags: vk::SubpassDescriptionFlags::empty(),
-			pipeline_bind_point: P::bind_point(),
+			pipeline_bind_point,
 			color_attachment_count: color.len() as u32,
 			p_color_attachments: color.as_ptr(),
 			p_resolve_attachments: if resolve.len() != 0 { resolve.as_ptr() } else { ptr::null() },
@@ -238,33 +257,25 @@ impl<A, S> VkRenderPassBuilderSubpasses<A, S> {
 			p_preserve_attachments: preserve.as_ptr(),
 		};
 
-		self.descriptions.push(description);
-		self.subpasses.push(Subpass { input, color, resolve, depth_stencil, preserve });
+		self.subpass_descriptions.push(description);
+		self.subpasses.push(Subpass {
+			pipeline_bind_point,
+			input,
+			color,
+			resolve,
+			depth_stencil,
+			preserve
+		});
 
-		VkRenderPassBuilderSubpasses {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-			descriptions: self.descriptions,
-			subpasses: self.subpasses,
-			_subpasses: PhantomData,
-		}
+		self
 	}
-}
-impl<A, S1, S2> VkRenderPassBuilderSubpasses<A, (S1, S2)> {
-	// NOTE: Implementing here enforce that this render pass has at least one subpass.
-	pub fn dependencies(self) -> VkRenderPassBuilderDependencies<A, (S1, S2)> {
-		VkRenderPassBuilderDependencies {
-			attachments: self.attachments,
-			_attachments: PhantomData,
-			description: self.descriptions,
-			subpasses: self.subpasses,
-			_subpasses: PhantomData,
-			dependencies: Vec::new(),
-		}
+
+	pub fn dependencies(self) -> RenderPassBuilder<DependencyState> {
+		self.into()
 	}
 }
 
-impl<A, S> VkRenderPassBuilderDependencies<A, S> {
+impl RenderPassBuilder<DependencyState> {
 	pub fn dependency(
 		mut self,
 		src_subpass: u32,
@@ -275,10 +286,10 @@ impl<A, S> VkRenderPassBuilderDependencies<A, S> {
 		dst_stage_mask: vk::PipelineStageFlags,
 		dependency_flags: vk::DependencyFlags,
 	) -> Self {
-		debug_assert!(src_subpass < self.subpasses.len() as u32 || src_subpass == !0);
-		debug_assert!(dst_subpass < self.subpasses.len() as u32 || dst_subpass == !0);
+		debug_assert!(src_subpass < self.subpasses.len() as u32 || src_subpass == vk::SUBPASS_EXTERNAL);
+		debug_assert!(dst_subpass < self.subpasses.len() as u32 || dst_subpass == vk::SUBPASS_EXTERNAL);
 
-		self.dependencies.push(
+		self.subpass_dependencies.push(
 			vk::SubpassDependency {
 				src_subpass,
 				dst_subpass,
@@ -293,28 +304,31 @@ impl<A, S> VkRenderPassBuilderDependencies<A, S> {
 		self
 	}
 
-	pub fn build(self, device: Arc<Device>) -> Arc<RenderPass<A, S>> {
+	pub fn build<I, D>(self, device: D) -> RenderPass<I, D>
+		where I: Borrow<Instance> + Deref<Target = Instance>,
+              D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+	{
 		let info = vk::RenderPassCreateInfo {
 			s_type: StructureType::RENDER_PASS_CREATE_INFO,
 			p_next: ptr::null(),
 			flags: vk::RenderPassCreateFlags::empty(),
 			attachment_count: self.attachments.len() as u32,
-			p_attachments: self.attachments.as_ptr(),
-			subpass_count: self.description.len() as u32,
-			p_subpasses: self.description.as_ptr(),
-			dependency_count: self.dependencies.len() as u32,
-			p_dependencies: self.dependencies.as_ptr(),
+			p_attachments: self.attachment_descriptions.as_ptr(),
+			subpass_count: self.subpass_descriptions.len() as u32,
+			p_subpasses: self.subpass_descriptions.as_ptr(),
+			dependency_count: self.subpass_dependencies.len() as u32,
+			p_dependencies: self.subpass_dependencies.as_ptr(),
 		};
 
 		let handle = unsafe { device.handle.create_render_pass(&info, None).unwrap() };
 
-		Arc::new(RenderPass {
+		RenderPass {
+			_instance: PhantomData,
 			device,
 			handle,
-			attachments: PhantomData,
-			subpasses: PhantomData,
-			subpass_count: self.description.len() as u32,
-		})
+			attachments: self.attachments,
+			subpasses: self.subpasses,
+		}
 	}
 }
 

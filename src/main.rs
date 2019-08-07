@@ -3,7 +3,7 @@ mod linear_algebra;
 mod vulkan;
 mod engine;
 //mod gui;
-mod interaction;
+//mod interaction;
 
 use engine::Engine;
 

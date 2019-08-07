@@ -34,21 +34,33 @@
 
 use ash::vk::BufferUsageFlags;
 
+use super::utility::TypeIterEnd;
+
+
 pub trait BufferUsage {
 	fn buffer_usage() -> BufferUsageFlags;
 }
 
+pub struct BufferUsageBuilder<T>(T) where T: BufferUsage;
+pub fn builder() -> BufferUsageBuilder<Empty> { BufferUsageBuilder(Empty) }
+impl<T> BufferUsageBuilder<T> where T: BufferUsage {
+	pub fn build(self) -> T { self.0 }
+}
+
+
 pub struct Empty;
+impl TypeIterEnd for Empty {}
 impl BufferUsage for Empty {
 	fn buffer_usage() -> BufferUsageFlags { BufferUsageFlags::empty() }
 }
 
+
 macro_rules! impl_buffer_usage {
 	($($usage_flag:ident, $flag:ident,)*) => {
 		$(
-			pub struct $usage_flag<U>(pub U) where U: BufferUsage;
+			pub struct $usage_flag;
 
-			impl<U> BufferUsage for $usage_flag<U> where U: BufferUsage {
+			impl<U> BufferUsage for (U, $usage_flag) where U: BufferUsage {
 				fn buffer_usage() -> BufferUsageFlags {
 					BufferUsageFlags::$flag | U::buffer_usage()
 				}
@@ -75,21 +87,28 @@ impl_buffer_usage!(
 );
 
 macro_rules! impl_usage_trait {
-	($usage_flag:ident, $usage_trait:ident, $not_trait:ident, $($other_flag:ident,)*) => {
+	($usage_flag:ident, $usage_fn:ident, $usage_trait:ident, $not_trait:ident, $($other_usage_flag:ident,)*) => {
 		pub trait $usage_trait: BufferUsage {}
 		pub trait $not_trait: BufferUsage {}
 
-		impl<U> $usage_trait for $usage_flag<U> where U: $not_trait {}
-		$(impl<U> $usage_trait for $other_flag<U> where U: $usage_trait {})*
+		impl<U> $usage_trait for (U, $usage_flag) where U: $not_trait {}
+		$(impl<U> $usage_trait for (U, $other_usage_flag) where U: $usage_trait {})*
 
 		impl $not_trait for Empty {}
-		$(impl<U> $not_trait for $other_flag<U> where U: $not_trait {})*
+		$(impl<U> $not_trait for (U, $other_usage_flag) where U: $not_trait {})*
+
+		impl<T> BufferUsageBuilder<T> where T: $not_trait {
+			pub fn $usage_fn(self) -> BufferUsageBuilder<(T, $usage_flag)> {
+				BufferUsageBuilder((self.0, $usage_flag))
+			}
+		}
 	};
 }
 
 
 impl_usage_trait!(
 	TransferSrcFlag,
+	transfer_src,
 	TransferSrc,
 	NotTransferSrc,
 		// TransferSrcFlag,
@@ -110,6 +129,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	TransferDstFlag,
+	transfer_dst,
 	TransferDst,
 	NotTransferDst,
 		TransferSrcFlag,
@@ -130,6 +150,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	UniformTexelBufferFlag,
+	uniform_texel_buffer,
 	UniformTexelBuffer,
 	NotUniformTexelBuffer,
 		TransferSrcFlag,
@@ -150,6 +171,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	StorageTexelBufferFlag,
+	storage_texel_buffer,
 	StorageTexelBuffer,
 	NotStorageTexelBuffer,
 		TransferSrcFlag,
@@ -170,6 +192,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	UniformBufferFlag,
+	uniform_buffer,
 	UniformBuffer,
 	NotUniformBuffer,
 		TransferSrcFlag,
@@ -190,6 +213,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	StorageBufferFlag,
+	storage_buffer,
 	StorageBuffer,
 	NotStorageBuffer,
 		TransferSrcFlag,
@@ -210,6 +234,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	IndexBufferFlag,
+	index_buffer,
 	IndexBuffer,
 	NotIndexBuffer,
 		TransferSrcFlag,
@@ -230,6 +255,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	VertexBufferFlag,
+	vertex_buffer,
 	VertexBuffer,
 	NotVertexBuffer,
 		TransferSrcFlag,
@@ -250,6 +276,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	IndirectBufferFlag,
+	indirect_buffer,
 	IndirectBuffer,
 	NotIndirectBuffer,
 		TransferSrcFlag,
@@ -270,6 +297,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	TransformFeedbackBufferExtFlag,
+	transform_feedback_buffer_ext,
 	TransformFeedbackBufferExt,
 	NotTransformFeedbackBufferExt,
 		TransferSrcFlag,
@@ -290,6 +318,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	TransformFeedbackCounterBufferExtFlag,
+	transform_feedback_counter_buffer_ext,
 	TransformFeedbackCounterBufferExt,
 	NotTransformFeedbackCounterBufferExt,
 		TransferSrcFlag,
@@ -310,6 +339,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	ConditionalRenderingExtFlag,
+	conditional_rendering_ext,
 	ConditionalRenderingExt,
 	NotConditionalRenderingExt,
 		TransferSrcFlag,
@@ -330,6 +360,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	RayTracingNvFlag,
+	ray_tracing_nv,
 	RayTracingNv,
 	NotRayTracingNv,
 		TransferSrcFlag,
@@ -350,6 +381,7 @@ impl_usage_trait!(
 
 impl_usage_trait!(
 	ShaderDeviceAddressExtFlag,
+	shader_device_address_ext,
 	ShaderDeviceAddressExt,
 	NotShaderDeviceAddressExt,
 		TransferSrcFlag,

@@ -138,7 +138,7 @@ impl<P> PipelineLayoutBuilderPushConstants<P> {
 		where S: shader::stage::ShaderStages
 	{
 		let size = std::mem::size_of::<T>() as u32;
-		let size = if size % 4 != 0 { (size / 4 + 1) * 4 } else { size };
+		debug_assert_eq!(size % 4, 0, "Size of push constant must be multiple of 4.");
 
 		let push_constant = vk::PushConstantRange {
 			stage_flags: S::shader_stages(),

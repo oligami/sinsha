@@ -8,5 +8,5 @@ edition = "2018"
 [dependencies]
 ash = "0.29"
 image_crate = { package = "image", version = "0.21" }
-winit = "0.19"
+winit = "0.20.0-alpha2"
 winapi = "0.3"
