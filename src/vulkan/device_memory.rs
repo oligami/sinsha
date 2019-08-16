@@ -1,22 +1,8 @@
 pub mod alloc;
 pub mod buffer;
 pub mod image;
-pub mod memory_property;
 
-pub use alloc::*;
-pub use buffer::*;
-pub use image::*;
-
-pub use memory_property::{
-    MemoryProperties,
-    MemoryProperty,
-    DeviceLocal,
-    HostVisible,
-    HostCoherent,
-    HostCached,
-    LazilyAllocated,
-    Protected,
-};
+pub use memory_property::MemoryProperty;
 
 use ash::vk;
 use ash::vk::StructureType;
@@ -25,43 +11,35 @@ use ash::version::DeviceV1_0;
 use crate::vulkan::*;
 
 use super::*;
+use alloc::*;
 use std::ptr;
 use std::mem;
 use std::slice;
 use std::sync::Mutex;
 use std::alloc::Layout;
+use std::ops::{ RangeBounds, Bound };
 
-pub struct DeviceMemory<I, D, A, P>
+pub struct DeviceMemory<I, D, A>
     where I: Borrow<Instance> + Deref<Target = Instance>,
           D: Borrow<Device<I>> + Deref<Target = Device<I>>,
           A: Allocator,
-          P: MemoryProperty
 {
-    _instance: PhantomData<I>,
+    _marker: PhantomData<I>,
     device: D,
     handle: vk::DeviceMemory,
     type_index: u32,
-    allocator: Mutex<A>,
+    allocator: A,
     size: u64,
-    access: Mutex<MemoryAccess>,
-    _properties: PhantomData<P>,
 }
 
-pub trait DeviceMemoryAbs {
-    type Instance: Borrow<Instance> + Deref<Target = Instance>;
-    type Device: Borrow<Device<Self::Instance>> + Deref<Target = Device<Self::Instance>>;
-    type Allocator: Allocator;
-    type MemoryProperty: MemoryProperty;
-
-    fn instance(&self) -> &Instance;
-    fn device(&self) -> &Device<Self::Instance>;
-    fn handle(&self) -> vk::DeviceMemory;
-    fn size(&self) -> u64;
-}
-
-struct MemoryAccess {
-    count: usize,
-    pointer: usize,
+pub struct DeviceMemoryMapper<I, D, A, M> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
+    A: Allocator,
+{
+    device_memory: M,
+    address: usize,
 }
 
 #[derive(Debug)]
@@ -71,16 +49,15 @@ pub enum MemoryErr {
 }
 
 
-impl<I, D, A, P> DeviceMemory<I, D, A, P>
+impl<I, D, A> DeviceMemory<I, D, A>
     where I: Borrow<Instance> + Deref<Target = Instance>,
           D: Borrow<Device<I>> + Deref<Target = Device<I>>,
           A: Allocator,
-          P: MemoryProperty
 {
     pub fn with_allocator(
         device: D,
         allocator: A,
-        memory_properties: P,
+        memory_properties: vk::MemoryPropertyFlags,
     ) -> Result<Self, MemoryErr> {
         let type_index = Self::compatible_memory_type_indices(&device, memory_properties)
             .into_iter()
@@ -97,23 +74,18 @@ impl<I, D, A, P> DeviceMemory<I, D, A, P>
         };
 
         let memory = Self {
-            _instance: PhantomData,
+            _marker: PhantomData,
             device,
             handle,
             type_index,
             size: allocator.size(),
-            allocator: Mutex::new(allocator),
-            access: Mutex::new(MemoryAccess { count: 0, pointer: 0 }),
-            _properties: PhantomData,
+            allocator,
         };
 
         Ok(memory)
     }
 
-    fn compatible_memory_type_indices<MP>(device: &D, _memory_property: MP) -> Vec<u32>
-        where MP: MemoryProperty
-    {
-        let flags = MP::memory_property();
+    fn compatible_memory_type_indices(device: &D, flags: vk::MemoryPropertyFlags) -> Vec<u32> {
         device
             .instance.physical_devices[device.physical_device_index]
             .memory_types
@@ -126,66 +98,78 @@ impl<I, D, A, P> DeviceMemory<I, D, A, P>
                 indices
             })
     }
+
+    #[inline]
+    pub fn device(&self) -> &Device<I> { &self.device }
+    #[inline]
+    pub fn size(&self) -> u64 { self.size }
 }
 
-impl<I, D, A, P> DeviceMemoryAbs for DeviceMemory<I, D, A, P>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          A: Allocator,
-          P: MemoryProperty
+impl<I, D, A> Drop for DeviceMemory<I, D, A> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    A: Allocator,
 {
-    type Instance = I;
-    type Device = D;
-    type Allocator = A;
-    type MemoryProperty = P;
-
-    #[inline]
-    fn instance(&self) -> &Instance { &self.device.instance }
-    #[inline]
-    fn device(&self) -> &Device<Self::Instance> { &self.device }
-    #[inline]
-    fn handle(&self) -> vk::DeviceMemory { self.handle }
-    #[inline]
-    fn size(&self) -> u64 { self.size }
+    fn drop(&mut self) { unsafe { self.device.handle.free_memory(self.handle, None) } }
 }
 
-impl<I, D, A, P> Drop for DeviceMemory<I, D, A, P>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          A: Allocator,
-          P: MemoryProperty
+impl<I, D, A, M> DeviceMemoryMapper<I, D, A, M> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
+    A: Allocator,
+{
+    pub unsafe fn map_whole_size(device_memory: M) -> DeviceMemoryMapper<I, D, A, M> {
+        let size = device_memory.size;
+        Self::map(device_memory, 0..size)
+    }
+
+    pub unsafe fn map<R>(device_memory: M, range: R) -> DeviceMemoryMapper<I, D, A, M> where
+        R: RangeBounds<u64>,
+    {
+        let contains_host_visible_flag = device_memory.device.instance
+            .physical_devices[device_memory.device.physical_device_index]
+            .memory_types[device_memory.type_index as usize]
+            .property_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE);
+        debug_assert!(contains_host_visible_flag);
+        let start = match range.start_bound() {
+            Bound::Included(n) => *n,
+            Bound::Excluded(n) => *n + 1,
+            Bound::Unbounded => 0,
+        };
+
+        let end = match range.end_bound() {
+            Bound::Included(n) => *n,
+            Bound::Excluded(n) => *n - 1,
+            Bound::Unbounded => device_memory.size,
+        };
+
+        let address = device_memory.device.handle
+            .map_memory(
+                device_memory.handle,
+                start,
+                end - start,
+                vk::MemoryMapFlags::empty(),
+            )
+            .unwrap() as usize;
+
+        DeviceMemoryMapper { device_memory, address }
+    }
+
+    #[inline]
+    pub fn as_ptr<T>(&self) -> *const T { self.address as *const T }
+    #[inline]
+    pub fn as_mut_ptr<T>(&self) -> *mut T { self.address as *mut T }
+}
+
+impl<I, D, A, M> Drop for DeviceMemoryMapper<I, D, A, M> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
+    A: Allocator,
 {
     fn drop(&mut self) {
-        unsafe { self.device.handle.free_memory(self.handle, None) }
-        // Ensure that there is no cpu access to this memory.
-        debug_assert!(
-            self.access.lock().unwrap().count == 0,
-            "There is/are {} cpu access to this vk::DeviceMemory!",
-            self.access.lock().unwrap().count,
-        );
-    }
-}
-
-impl<I, D, A, P> Destroy for DeviceMemory<I, D, A, P>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          A: Allocator,
-          P: MemoryProperty
-{
-    type Ok = ();
-    type Error = Infallible;
-
-    unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
-        unsafe { self.device.handle.free_memory(self.handle, None) }
-
-        // Ensure that there is no cpu access to this memory.
-        debug_assert!(
-            self.access.lock().unwrap().count == 0,
-            "There is/are {} cpu access to this vk::DeviceMemory!",
-            self.access.lock().unwrap().count,
-        );
-
-        Ok(())
+        unsafe { self.device_memory.device.handle.unmap_memory(self.device_memory.handle); }
     }
 }
 
@@ -193,3 +177,34 @@ impl From<vk::Result> for MemoryErr {
     fn from(v: vk::Result) -> Self { MemoryErr::Vk(v) }
 }
 
+
+mod memory_property {
+    use ash::vk;
+
+    pub struct MemoryProperty {
+        flags: vk::MemoryPropertyFlags,
+    }
+
+    impl MemoryProperty {
+        pub fn builder() -> Self { MemoryProperty { flags: vk::MemoryPropertyFlags::empty() } }
+        pub fn device_local(self) -> Self {
+            MemoryProperty { flags: self.flags | vk::MemoryPropertyFlags::DEVICE_LOCAL }
+        }
+        pub fn host_visible(self) -> Self {
+            MemoryProperty { flags: self.flags | vk::MemoryPropertyFlags::HOST_VISIBLE }
+        }
+        pub fn host_coherent(self) -> Self {
+            MemoryProperty { flags: self.flags | vk::MemoryPropertyFlags::HOST_COHERENT }
+        }
+        pub fn host_cached(self) -> Self {
+            MemoryProperty { flags: self.flags | vk::MemoryPropertyFlags::HOST_CACHED }
+        }
+        pub fn lazily_allocated(self) -> Self {
+            MemoryProperty { flags: self.flags | vk::MemoryPropertyFlags::LAZILY_ALLOCATED }
+        }
+        pub fn protected(self) -> Self {
+            MemoryProperty { flags: self.flags | vk::MemoryPropertyFlags::PROTECTED }
+        }
+        pub fn build(self) -> vk::MemoryPropertyFlags { self.flags }
+    }
+}

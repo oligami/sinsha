@@ -1,14 +1,7 @@
-pub mod ty;
-
-
 use super::*;
-use device_memory::buffer::DataAbs;
-use device_memory::buffer::usage;
-use device_memory::image::ImageAbs;
-
-pub use ty::DescriptorType;
-
-use ty::{ Buffer, Image, BufferView, PNext };
+use device_memory::{ DeviceMemory, alloc::Allocator };
+use buffer::{ Buffer, Data };
+use image::ImageView;
 
 pub struct DescriptorSetLayout<I, D> where
     I: Borrow<Instance> + Deref<Target = Instance>,
@@ -16,7 +9,7 @@ pub struct DescriptorSetLayout<I, D> where
 {
     _marker: PhantomData<I>,
     device: D,
-    handle: vk::DescriptorSetLayout,
+    pub(super) handle: vk::DescriptorSetLayout,
     bindings: Vec<Binding>,
 }
 
@@ -34,7 +27,7 @@ pub struct DescriptorPool<I, D> where
     handle: vk::DescriptorPool,
 }
 
-pub struct DescriptorSet<I, D, L, P, R> where
+pub struct DescriptorSet<I, D, L, P> where
     I: Borrow<Instance> + Deref<Target = Instance>,
     D: Borrow<Device<I>> + Deref<Target = Device<I>>,
     L: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
@@ -44,27 +37,11 @@ pub struct DescriptorSet<I, D, L, P, R> where
     layout: L,
     pool: P,
     handle: vk::DescriptorSet,
-    resources: R,
 }
 
-pub struct DescriptorSetUpdate<I, D, L, P, R, R1> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    L: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-    P: Borrow<DescriptorPool<I, D>> + Deref<Target = DescriptorPool<I, D>>,
-{
-    _marker: PhantomData<(I, D, L, P, R)>,
-    set: DescriptorSet<I, D, L, P, R>,
-    writes: Vec<vk::WriteDescriptorSet>,
-    copies: Vec<vk::CopyDescriptorSet>,
-    buffer_infos: Vec<Vec<vk::DescriptorBufferInfo>>,
-    image_infos: Vec<Vec<vk::DescriptorImageInfo>>,
-    buffer_view: Vec<vk::BufferView>,
-    resources: R1,
-}
-
-pub struct DataInfos<R> {
-    infos: Vec<vk::DescriptorBufferInfo>,
+pub struct BindResources<'b, R> {
+    binding: &'b [Binding],
+    write: vk::WriteDescriptorSet,
     resources: R,
 }
 
@@ -144,7 +121,7 @@ impl<I, D> Drop for DescriptorPool<I, D> where
     fn drop(&mut self) { unsafe { self.device.handle.destroy_descriptor_pool(self.handle, None); } }
 }
 
-impl<I, D, L, P> DescriptorSet<I, D, L, P, ()> where
+impl<I, D, L, P> DescriptorSet<I, D, L, P> where
     I: Borrow<Instance> + Deref<Target = Instance>,
     D: Borrow<Device<I>> + Deref<Target = Device<I>>,
     L: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
@@ -164,103 +141,29 @@ impl<I, D, L, P> DescriptorSet<I, D, L, P, ()> where
         handles.into_iter()
             .zip(layouts.iter())
             .map(|(handle, layout)| {
-                Self {
-                    _marker: PhantomData,
-                    handle,
-                    layout: layout.clone(),
-                    pool: pool.clone(),
-                    resources: (),
-                }
+                Self { _marker: PhantomData, handle, layout: layout.clone(), pool: pool.clone() }
             })
             .collect()
     }
-}
-impl<I, D, L, P, R> DescriptorSet<I, D, L, P, R> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    L: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-    P: Borrow<DescriptorPool<I, D>> + Deref<Target = DescriptorPool<I, D>>,
-{
-    pub fn updater(self) -> DescriptorSetUpdate<I, D, L, P, R, ()> {
-        DescriptorSetUpdate {
-            _marker: PhantomData,
-            set: self,
-            writes: Vec::new(),
-            copies: Vec::new(),
-            buffer_infos: Vec::new(),
-            image_infos: Vec::new(),
-            buffer_view: Vec::new(),
-            resources: (),
-        }
-    }
+
+    #[inline]
+    pub fn layout(&self) -> &DescriptorSetLayout<I, D> { &self.layout }
 }
 
-impl<I, D, L, P, R, R1> DescriptorSetUpdate<I, D, L, P, R, R1> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    L: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>> + Clone,
-    P: Borrow<DescriptorPool<I, D>> + Deref<Target = DescriptorPool<I, D>> + Clone,
-{
-    pub fn write_data<R2>(mut self, binding: u32, array_element: u32, data_infos: DataInfos<R2>)
-        -> DescriptorSetUpdate<I, D, L, P, R, (R1, R2)> where
+
+impl<'b, R> BindResources<'b, R> {
+    pub fn add_data<I, D, M, B, Da, BA, DA, T>(mut self, data: Da) -> BindResources<'b, (R, Da)> where
+        I: Borrow<Instance> + Deref<Target = Instance>,
+        D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+        M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+        B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
+        Da: Borrow<Data<I, D, M, B, BA, DA, T>> + Deref<Target = Data<I, D, M, B, BA, DA, T>>,
+        BA: Allocator,
+        DA: Allocator,
     {
-        let write = vk::WriteDescriptorSet::builder()
-            .dst_set(self.set.handle)
-            .dst_binding(binding)
-            .dst_array_element(array_element)
-            .descriptor_type(self.set.layout.bindings[binding as usize].ty)
-            .buffer_info(&data_infos.infos[..])
-            .build();
+        let info = vk::WriteDescriptorSet::builder()
+            .dst_set(unimplemented!());
 
-        self.writes.push(write);
-        self.buffer_infos.push(data_infos.infos);
-
-        DescriptorSetUpdate {
-            _marker: PhantomData,
-            set: self.set,
-            writes: self.writes,
-            copies: self.copies,
-            buffer_infos: self.buffer_infos,
-            image_infos: self.image_infos,
-            buffer_view: self.buffer_view,
-            resources: (self.resources, data_infos.resources),
-        }
-    }
-
-    pub fn update(self) -> DescriptorSet<I, D, L, P, R1> {
-        unsafe {
-            self.set.layout.device.handle.update_descriptor_sets(&self.writes[..], &self.copies[..])
-        }
-
-        DescriptorSet {
-            _marker: PhantomData,
-            layout: self.set.layout.clone(),
-            pool: self.set.pool.clone(),
-            handle: self.set.handle,
-            resources: self.resources,
-        }
-    }
-}
-
-impl DataInfos<()>{
-    pub fn new() -> Self { DataInfos { infos: Vec::new(), resources: () } }
-}
-impl<R> DataInfos<R> {
-    pub fn add_data<Ref, Data>(mut self, data: Ref) -> DataInfos<(R, Ref)> where
-        Ref: Borrow<Data> + Deref<Target =Data>,
-        Data: DataAbs,
-        Data::Usage: usage::UniformBuffer,
-    {
-        let info = vk::DescriptorBufferInfo::builder()
-            .buffer(data.handle())
-            .offset(data.offset())
-            .range(data.size())
-            .build();
-        self.infos.push(info);
-
-        DataInfos {
-            infos: self.infos,
-            resources: (self.resources, data),
-        }
+        unimplemented!()
     }
 }

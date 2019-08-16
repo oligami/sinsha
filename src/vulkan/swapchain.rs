@@ -1,49 +1,48 @@
 use super::*;
-use super::device_memory::image::{ ImageUsage, extent };
+use image::Extent2D;
 
 use std::ops::Range;
+use std::time::Duration;
 
-pub struct SwapchainKHR<I, S, D, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          U: ImageUsage,
+pub struct SwapchainKHR<I, S, D> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
 {
-    _marker: PhantomData<(I, U)>,
+    _marker: PhantomData<I>,
     surface: S,
     device: D,
     loader: khr::Swapchain,
     handle: vk::SwapchainKHR,
     images: Vec<vk::Image>,
-    extent: extent::Extent2D,
+    usage: vk::ImageUsageFlags,
+    extent: Extent2D,
     format: vk::Format,
     color_space: vk::ColorSpaceKHR,
     min_image_count: u32,
     present_mode: vk::PresentModeKHR,
 }
 
-pub struct SwapchainImageView<I, S, D, Sw, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          Sw: Borrow<SwapchainKHR<I, S, D, U>> + Deref<Target = SwapchainKHR<I, S, D, U>>,
-          U: ImageUsage
+pub struct SwapchainImageView<I, S, D, Sw> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    Sw: Borrow<SwapchainKHR<I, S, D>> + Deref<Target = SwapchainKHR<I, S, D>>,
 {
-    _marker: PhantomData<(I, S, D, U)>,
+    _marker: PhantomData<(I, S, D)>,
     swapchain: Sw,
     handle: vk::ImageView,
 }
 
-impl<I, S, D, U> SwapchainKHR<I, S, D, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          U: ImageUsage,
+impl<I, S, D> SwapchainKHR<I, S, D> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
 {
     pub fn new(
         surface: S,
         device: D,
-        _usage: U,
+        usage: vk::ImageUsageFlags,
         format: vk::Format,
         present_mode: vk::PresentModeKHR,
         min_image_count: u32,
@@ -77,7 +76,7 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
 
         let surface_format = surface_formats
             .iter()
-            .inspect(|f| println!("format: {:?}", f))
+//            .inspect(|f| println!("format: {:?}", f))
             .find(|f| f.format == format)
             .unwrap();
 
@@ -103,7 +102,7 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
             image_color_space: surface_format.color_space,
             image_extent: window_extent,
             image_array_layers: 1,
-            image_usage: U::image_usage(),
+            image_usage: usage,
             image_sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 0,
             p_queue_family_indices: ptr::null(),
@@ -116,11 +115,7 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
 
         let loader = unsafe { khr::Swapchain::new(&device.instance.handle, &device.handle) };
 
-        let handle = unsafe {
-            loader
-                .create_swapchain(&info, None)
-                .unwrap()
-        };
+        let handle = unsafe { loader.create_swapchain(&info, None).unwrap() };
 
         let images = unsafe { loader.get_swapchain_images(handle).unwrap() };
 
@@ -131,7 +126,8 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
             loader,
             handle,
             images,
-            extent: extent::Extent2D { width: window_extent.width, height: window_extent.height },
+            usage,
+            extent: Extent2D { width: window_extent.width, height: window_extent.height },
             format,
             color_space: surface_format.color_space,
             min_image_count,
@@ -141,7 +137,7 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
 
 
     // NOTE: Multiple mip levels and array layers maybe need in the future.
-    pub fn views<Sw>(swapchain: Sw) -> Vec<SwapchainImageView<I, S, D, Sw, U>>
+    pub fn views<Sw>(swapchain: Sw) -> Vec<SwapchainImageView<I, S, D, Sw>>
         where Sw: Borrow<Self> + Deref<Target = Self> + Clone,
     {
         swapchain.images.iter()
@@ -198,7 +194,7 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
             image_color_space: self.color_space,
             image_extent: new_extent,
             image_array_layers: 1,
-            image_usage: U::image_usage(),
+            image_usage: self.usage,
             image_sharing_mode: vk::SharingMode::EXCLUSIVE,
             queue_family_index_count: 0,
             p_queue_family_indices: ptr::null(),
@@ -214,43 +210,88 @@ impl<I, S, D, U> SwapchainKHR<I, S, D, U>
 
         unsafe { self.loader.destroy_swapchain(self.handle, None); }
 
-        self.extent = extent::Extent2D { width: new_extent.width, height: new_extent.height };
+        self.extent = Extent2D { width: new_extent.width, height: new_extent.height };
         self.handle = new_handle;
         self.images = new_images;
 
         self
     }
 
-    pub fn extent(&self) -> &extent::Extent2D { &self.extent }
+    pub fn acquire_next_image(
+        &self,
+        timeout: Duration,
+        semaphore: vk::Semaphore,
+        fence: vk::Fence,
+    ) -> u32 {
+        unsafe {
+            self.loader
+                .acquire_next_image(self.handle, timeout.as_nanos() as u64, semaphore, fence)
+                .unwrap()
+                .0
+        }
+    }
+
+    pub fn queue_present(
+        &self,
+        queue: vk::Queue,
+        image_index: u32,
+        wait_semaphores: &[vk::Semaphore]
+    ) {
+        unsafe {
+            self.loader
+                .queue_present(
+                    queue,
+                    &vk::PresentInfoKHR::builder()
+                        .swapchains(&[self.handle])
+                        .image_indices(&[image_index])
+                        .wait_semaphores(wait_semaphores)
+                )
+                .unwrap();
+        }
+    }
+
+    #[inline]
+    pub fn whole_area(&self) -> vk::Rect2D {
+        vk::Rect2D::builder()
+            .offset(vk::Offset2D::builder().x(0).y(0).build())
+            .extent(self.vk_extent_2d())
+            .build()
+    }
+    #[inline]
+    pub fn extent(&self) -> &Extent2D { &self.extent }
+    #[inline]
+    pub fn vk_extent_2d(&self) -> vk::Extent2D {
+        vk::Extent2D { width: self.extent.width, height: self.extent.height }
+    }
+    #[inline]
+    pub fn image_count(&self) -> usize { self.images.len() }
 }
 
-impl<I, S, D, U> Drop for SwapchainKHR<I, S, D, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          U: ImageUsage, {
+impl<I, S, D> Drop for SwapchainKHR<I, S, D> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+{
     fn drop(&mut self) { unsafe { self.loader.destroy_swapchain(self.handle, None); } }
 }
 
-impl<I, S, D, Sw, U> SwapchainImageView<I, S, D, Sw, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          Sw: Borrow<SwapchainKHR<I, S, D, U>> + Deref<Target = SwapchainKHR<I, S, D, U>>,
-          U: ImageUsage,
+impl<I, S, D, Sw> SwapchainImageView<I, S, D, Sw> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    Sw: Borrow<SwapchainKHR<I, S, D>> + Deref<Target = SwapchainKHR<I, S, D>>,
 {
     #[inline]
     pub fn handle(&self) -> vk::ImageView { self.handle }
     #[inline]
-    pub fn extent(&self) -> &extent::Extent2D { &self.swapchain.extent }
+    pub fn extent(&self) -> &Extent2D { &self.swapchain.extent }
 }
 
-impl<I, S, D, Sw, U> Drop for SwapchainImageView<I, S, D, Sw, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          Sw: Borrow<SwapchainKHR<I, S, D, U>> + Deref<Target = SwapchainKHR<I, S, D, U>>,
-          U: ImageUsage,
+impl<I, S, D, Sw> Drop for SwapchainImageView<I, S, D, Sw> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    S: Borrow<SurfaceKHR<I>> + Deref<Target = SurfaceKHR<I>>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    Sw: Borrow<SwapchainKHR<I, S, D>> + Deref<Target = SwapchainKHR<I, S, D>>,
 {
     fn drop(&mut self) {
         unsafe { self.swapchain.device.handle.destroy_image_view(self.handle, None); }

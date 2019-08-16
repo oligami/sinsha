@@ -1,140 +1,39 @@
-pub mod usage;
-use usage::BufferUsage;
+pub use usage::BufferUsage;
 
 use super::*;
-use memory_property::*;
-
-
 use std::ops;
 
-pub struct Buffer<I, D, M, BA, P, DA, U>
+pub struct Buffer<I, D, M, BA, DA>
     where I: Borrow<Instance> + Deref<Target = Instance>,
           D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
+          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
           BA: Allocator,
-          P: MemoryProperty,
           DA: Allocator,
-          U: BufferUsage
 {
-    _marker: PhantomData<(I, D, P)>,
+    _marker: PhantomData<(I, D)>,
     memory: M,
     handle: vk::Buffer,
-    identifier: BA::Identifier,
-    range: ops::Range<u64>,
-    allocator: Mutex<DA>,
-    _usage: PhantomData<U>,
+    ident: BA::Identifier,
+    offset: u64,
+    size: u64,
+    align: usize,
+    allocator: DA,
 }
 
-pub trait BufferAbs {
-    type Instance: Borrow<Instance> + Deref<Target = Instance>;
-    type Device: Borrow<Device<Self::Instance>> + Deref<Target = Device<Self::Instance>>;
-    type Memory: Borrow<DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    >> + Deref<Target = DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    >>;
-    type BufferAllocator: Allocator;
-    type DataAllocator: Allocator;
-    type MemoryProperty: MemoryProperty;
-    type Usage: BufferUsage;
-
-    fn instance(&self) -> &Instance;
-    fn device(&self) -> &Device<Self::Instance>;
-    fn memory(&self) -> &DeviceMemory<Self::Instance, Self::Device, Self::BufferAllocator, Self::MemoryProperty>;
-    fn handle(&self) -> vk::Buffer;
-    fn offset(&self) -> u64;
-    fn size(&self) -> u64;
-}
-
-pub struct Data<I, D, M, B, BA, P, DA, U, T>
+pub struct Data<I, D, M, B, BA, DA, T>
     where I: Borrow<Instance> + Deref<Target = Instance>,
           D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          B: Borrow<Buffer<I, D, M, BA, P, DA, U>> + Deref<Target = Buffer<I, D, M, BA, P, DA, U>>,
+          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
           BA: Allocator,
-          P: MemoryProperty,
           DA: Allocator,
-          U: BufferUsage,
           T: ?Sized,
 {
-    _marker: PhantomData<(I, D, M, BA, U, P)>,
+    _marker: PhantomData<(I, D, M, BA, fn() -> T)>,
     buffer: B,
-    identifier: DA::Identifier,
-    range: ops::Range<u64>,
-    _type: PhantomData<fn() -> T>,
-}
-
-pub trait DataAbs {
-    type Instance: Borrow<Instance> + Deref<Target = Instance>;
-    type Device: Borrow<Device<Self::Instance>> + Deref<Target = Device<Self::Instance>>;
-    type Memory: Borrow<DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    >> + Deref<Target = DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    >>;
-    type Buffer: Borrow<Buffer<
-        Self::Instance,
-        Self::Device,
-        Self::Memory,
-        Self::BufferAllocator,
-        Self::MemoryProperty,
-        Self::DataAllocator,
-        Self::Usage,
-    >> + Deref<Target = Buffer<
-        Self::Instance,
-        Self::Device,
-        Self::Memory,
-        Self::BufferAllocator,
-        Self::MemoryProperty,
-        Self::DataAllocator,
-        Self::Usage,
-    >>;
-    type BufferAllocator: Allocator;
-    type DataAllocator: Allocator;
-    type MemoryProperty: MemoryProperty;
-    type Usage: BufferUsage;
-    type Type: ?Sized;
-
-    fn instance(&self) -> &Instance;
-    fn device(&self) -> &Device<Self::Instance>;
-    fn memory(&self) -> &DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    >;
-    fn buffer(&self) -> &Buffer<
-        Self::Instance,
-        Self::Device,
-        Self::Memory,
-        Self::BufferAllocator,
-        Self::MemoryProperty,
-        Self::DataAllocator,
-        Self::Usage,
-    >;
-    fn handle(&self) -> vk::Buffer;
-    fn offset(&self) -> u64;
-    fn size(&self) -> u64;
-}
-
-pub struct DataMapper<'data, D, T> where D: DataAbs<Type = T>, D::MemoryProperty: HostVisible, T: ?Sized {
-    data: &'data D,
-    pointer: usize,
-    _marker: PhantomData<T>,
-    // make this struct Not Send Nor Sync.
-    _ptr: PhantomData<*const ()>,
+    ident: DA::Identifier,
+    offset: u64,
+    size: u64,
 }
 
 #[derive(Debug)]
@@ -149,20 +48,18 @@ pub enum DataErr {
     Allocator(alloc::AllocErr),
 }
 
-impl<I, D, M, BA, P, DA, U> Buffer<I, D, M, BA, P, DA, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage
+impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+    BA: Allocator,
+    DA: Allocator,
 {
-    pub unsafe fn new(
+    pub fn new(
         memory: M,
         queue_families: &[u32],
         allocator: DA,
-        _usage: U,
+        usage: vk::BufferUsageFlags,
     ) -> Result<Self, BufferErr> {
         let device = &memory.device.handle;
         let sharing_mode = if queue_families.len() == 1 {
@@ -177,15 +74,15 @@ impl<I, D, M, BA, P, DA, U> Buffer<I, D, M, BA, P, DA, U>
                 flags: vk::BufferCreateFlags::empty(),
                 size: allocator.size(),
                 sharing_mode,
-                usage: U::buffer_usage(),
+                usage,
                 queue_family_index_count: queue_families.len() as u32,
                 p_queue_family_indices: queue_families.as_ptr(),
             };
 
-            device.create_buffer(&info, None)?
+            unsafe { device.create_buffer(&info, None)? }
         };
 
-        let memory_requirements = device.get_buffer_memory_requirements(handle);
+        let memory_requirements = unsafe { device.get_buffer_memory_requirements(handle) };
 
         if 1 << memory.type_index & memory_requirements.memory_type_bits == 0 {
             return Err(BufferErr::IncompatibleMemoryTypeIndex);
@@ -196,90 +93,49 @@ impl<I, D, M, BA, P, DA, U> Buffer<I, D, M, BA, P, DA, U>
             memory_requirements.alignment as usize,
         ).unwrap();
 
-        let (range, identifier) = memory.allocator.lock().unwrap().alloc(layout)?;
-        device.bind_buffer_memory(handle, memory.handle, range.start)?;
+        let (offset, ident) = match memory.allocator.alloc(layout) {
+            Ok(ok) => ok,
+            Err(e) => {
+                unsafe { device.destroy_buffer(handle, None) };
+                return Err(BufferErr::Allocator(e));
+            }
+        };
+        unsafe { device.bind_buffer_memory(handle, memory.handle, offset)? };
 
         let buffer = Self {
             _marker: PhantomData,
             memory,
             handle,
-            identifier,
-            range,
-            allocator: Mutex::new(allocator),
-            _usage: PhantomData,
+            ident,
+            offset,
+            size: memory_requirements.size,
+            align: memory_requirements.alignment as usize,
+            allocator,
         };
 
         Ok(buffer)
     }
+
+    #[inline]
+    pub fn device_memory(&self) -> &DeviceMemory<I, D, BA> { &self.memory }
+    #[inline]
+    pub fn handle(&self) -> vk::Buffer { self.handle }
+    #[inline]
+    pub fn offset(&self) -> u64 { self.offset }
+    #[inline]
+    pub fn size(&self) -> u64 { self.size }
 }
 
-impl<I, D, M, BA, P, DA, U> BufferAbs for Buffer<I, D, M, BA, P, DA, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage
-{
-    type Instance = I;
-    type Device = D;
-    type Memory = M;
-    type BufferAllocator = BA;
-    type DataAllocator = DA;
-    type MemoryProperty = P;
-    type Usage = U;
-
-    #[inline]
-    fn instance(&self) -> &Instance { &self.memory.device.instance }
-    #[inline]
-    fn device(&self) -> &Device<Self::Instance> { &self.memory.device }
-    #[inline]
-    fn memory(&self) -> &DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    > { &self.memory }
-    #[inline]
-    fn handle(&self) -> vk::Buffer { self.handle }
-    #[inline]
-    fn offset(&self) -> u64 { self.range.start }
-    #[inline]
-    fn size(&self) -> u64 { self.range.end - self.range.start }
-}
-
-impl<I, D, M, BA, P, DA, U> Destroy for Buffer<I, D, M, BA, P, DA, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage
-{
-    type Ok = ();
-    type Error = Infallible;
-
-    unsafe fn destroy(self) -> Result<Self::Ok, Self::Error>{
-        unsafe { self.device().handle.destroy_buffer(self.handle, None); }
-        self.memory().allocator.lock().unwrap().dealloc(&self.identifier);
-        Ok(())
-    }
-}
-
-impl<I, D, M, BA, P, DA, U> Drop for Buffer<I, D, M, BA, P, DA, U>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage
+impl<I, D, M, BA, DA> Drop for Buffer<I, D, M, BA, DA> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+    BA: Allocator,
+    DA: Allocator,
 {
     fn drop(&mut self) {
         unsafe { self.memory.device.handle.destroy_buffer(self.handle, None); }
-        self.memory().allocator.lock().unwrap().dealloc(&self.identifier);
+        self.memory.allocator.dealloc(&self.ident);
     }
 }
 
@@ -291,154 +147,84 @@ impl From<alloc::AllocErr> for BufferErr {
 }
 
 
-impl<I, D, M, B, BA, P, DA, U, T> Data<I, D, M, B, BA, P, DA, U, T>
+impl<I, D, M, B, BA, DA> Data<I, D, M, B, BA, DA, ()> where
+    I: Borrow<Instance> + Deref<Target = Instance>,
+    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+    B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
+    BA: Allocator,
+    DA: Allocator,
+{
+    pub fn new<T>(buffer: B) -> Result<Data<I, D, M, B, BA, DA, T>, DataErr> where T: Sized {
+        let align_of_t = mem::align_of::<T>();
+        let align = if align_of_t < buffer.align { buffer.align } else { align_of_t };
+        let size = mem::size_of::<T>();
+        let layout = Layout::from_size_align(size, align).unwrap();
+
+        let (offset, ident) = buffer.allocator.alloc(layout)?;
+
+        Ok(Data { _marker: PhantomData, buffer, ident, offset, size: size as u64 })
+    }
+
+    pub fn new_slice<T>(buffer: B, len: usize) -> Result<Data<I, D, M, B, BA, DA, [T]>, DataErr>
+        where T: Sized
+    {
+        let align_of_t = mem::align_of::<T>();
+        let align = if align_of_t < buffer.align { buffer.align } else { align_of_t };
+        let size = mem::size_of::<T>() * len;
+        let layout = Layout::from_size_align(size, align).unwrap();
+
+        let (offset, identifier) = buffer.allocator.alloc(layout)?;
+
+        Ok(Data { _marker: PhantomData, buffer, ident: identifier, offset, size: size as u64 })
+    }
+}
+
+impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, T>
     where I: Borrow<Instance> + Deref<Target = Instance>,
           D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          B: Borrow<Buffer<I, D, M, BA, P, DA, U>> + Deref<Target = Buffer<I, D, M, BA, P, DA, U>>,
+          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
           BA: Allocator,
-          P: MemoryProperty,
           DA: Allocator,
-          U: BufferUsage,
+          T: ?Sized,
+{
+    #[inline]
+    pub fn buffer(&self) -> &Buffer<I, D, M, BA, DA> { &self.buffer }
+    #[inline]
+    pub fn offset_by_buffer(&self) -> u64 { self.offset }
+    #[inline]
+    pub fn offset_by_memory(&self) -> u64 { self.buffer.offset + self.offset }
+    #[inline]
+    pub fn size(&self) -> u64 { self.size }
+}
+
+impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, [T]>
+    where I: Borrow<Instance> + Deref<Target = Instance>,
+          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
+          BA: Allocator,
+          DA: Allocator,
           T: Sized,
 {
-    pub unsafe fn new(
-        buffer: B,
-        _type: &T,
-    ) -> Result<Self, DataErr> {
-        let layout = Layout::new::<T>();
-        let (range, identifier) = buffer.allocator.lock().unwrap().alloc(layout)?;
-
-        Ok(Self { _marker: PhantomData, buffer, identifier, range, _type: PhantomData })
+    #[inline]
+    pub fn len(&self) -> u64 {
+        self.size() / mem::size_of::<T>() as u64
     }
 }
 
-impl<I, D, M, B, BA, P, DA, U, T> Data<I, D, M, B, BA, P, DA, U, T>
+impl<I, D, M, B, BA, DA, T> Drop for Data<I, D, M, B, BA, DA, T>
     where I: Borrow<Instance> + Deref<Target = Instance>,
           D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          B: Borrow<Buffer<I, D, M, BA, P, DA, U>> + Deref<Target = Buffer<I, D, M, BA, P, DA, U>>,
+          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
           BA: Allocator,
-          P: HostVisible,
           DA: Allocator,
-          U: BufferUsage,
-          T: ?Sized,
-{
-    // TODO: Return type must be Result.
-    pub fn mapper(&self) -> DataMapper<Self, T> {
-        let mut access = self.memory().access.lock().unwrap();
-        let memory_pointer = if access.count > 0 {
-            access.count += 1;
-            access.pointer
-        } else {
-            let new_memory_pointer = unsafe {
-                let memory = self.memory();
-                self.device().handle
-                    .map_memory(memory.handle, 0, memory.size, vk::MemoryMapFlags::empty())
-                    .unwrap() as usize
-
-            };
-
-            access.count = 1;
-            access.pointer = new_memory_pointer;
-
-            new_memory_pointer
-        };
-
-        DataMapper {
-            data: &self,
-            pointer: memory_pointer + self.offset() as usize,
-            _marker: PhantomData,
-            _ptr: PhantomData,
-        }
-    }
-}
-
-impl<I, D, M, B, BA, P, DA, U, T> DataAbs for Data<I, D, M, B, BA, P, DA, U, T>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          B: Borrow<Buffer<I, D, M, BA, P, DA, U>> + Deref<Target = Buffer<I, D, M, BA, P, DA, U>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage,
-          T: ?Sized
-{
-    type Instance = I;
-    type Device = D;
-    type Memory = M;
-    type Buffer = B;
-    type BufferAllocator = BA;
-    type DataAllocator = DA;
-    type MemoryProperty = P;
-    type Usage = U;
-    type Type = T;
-
-    #[inline]
-    fn instance(&self) -> &Instance { &self.buffer.memory.device.instance }
-    #[inline]
-    fn device(&self) -> &Device<Self::Instance> { &self.buffer.memory.device }
-    #[inline]
-    fn memory(&self) -> &DeviceMemory<
-        Self::Instance,
-        Self::Device,
-        Self::BufferAllocator,
-        Self::MemoryProperty
-    > { &self.buffer.memory }
-    #[inline]
-    fn buffer(&self) -> &Buffer<
-        Self::Instance,
-        Self::Device,
-        Self::Memory,
-        Self::BufferAllocator,
-        Self::MemoryProperty,
-        Self::DataAllocator,
-        Self::Usage,
-    > { &self.buffer }
-    #[inline]
-    fn handle(&self) -> vk::Buffer { self.buffer.handle }
-    #[inline]
-    fn offset(&self) -> u64 { self.range.start }
-    #[inline]
-    fn size(&self) -> u64 { self.range.end - self.range.start }
-}
-
-impl<I, D, M, B, BA, P, DA, U, T> Destroy for Data<I, D, M, B, BA, P, DA, U, T>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          B: Borrow<Buffer<I, D, M, BA, P, DA, U>> + Deref<Target = Buffer<I, D, M, BA, P, DA, U>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage,
-          T: ?Sized,
-{
-    type Ok = ();
-    type Error = Infallible;
-
-    /// This is not Vulkan API object.
-    /// Destroying this will tell parent buffer to free memory domain of this.
-    unsafe fn destroy(self) -> Result<Self::Ok, Self::Error> {
-        self.buffer.allocator.lock().unwrap().dealloc(&self.identifier);
-        Ok(())
-    }
-}
-
-impl<I, D, M, B, BA, P, DA, U, T> Drop for Data<I, D, M, B, BA, P, DA, U, T>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA, P>> + Deref<Target = DeviceMemory<I, D, BA, P>>,
-          B: Borrow<Buffer<I, D, M, BA, P, DA, U>> + Deref<Target = Buffer<I, D, M, BA, P, DA, U>>,
-          BA: Allocator,
-          P: MemoryProperty,
-          DA: Allocator,
-          U: BufferUsage,
           T: ?Sized,
 {
     fn drop(&mut self) {
-        self.buffer().allocator.lock().unwrap().dealloc(&self.identifier);
+        self.buffer().allocator.dealloc(&self.ident);
     }
 }
 
@@ -446,35 +232,88 @@ impl From<alloc::AllocErr> for DataErr {
     fn from(a: alloc::AllocErr) -> Self { DataErr::Allocator(a) }
 }
 
-impl<D, T> DataMapper<'_, D, T>
-    where D: DataAbs<Type = T>,
-          D::MemoryProperty: HostVisible,
-          T: Sized,
-{
-    pub unsafe fn read(&self) -> T { ptr::read(self.pointer as *const T) }
-    pub unsafe fn write(&self, data: T) { ptr::write(self.pointer as _, data) }
-}
+mod usage {
+    use ash::vk;
+    pub struct BufferUsage {
+        flags: vk::BufferUsageFlags,
+    }
 
-impl<D, T> DataMapper<'_, D, [T]>
-    where D: DataAbs<Type = [T]>,
-          D::MemoryProperty: HostVisible,
-          T: Sized,
-{
-    pub unsafe fn read(&self) -> &[T] { unimplemented!() }
-    pub unsafe fn write(&self, data: &[T]) { unimplemented!() }
-}
+    impl BufferUsage {
+        pub fn builder() -> Self {
+            BufferUsage { flags: vk::BufferUsageFlags::empty() }
+        }
 
-impl<D, T> Drop for DataMapper<'_, D, T> where D: DataAbs<Type = T>, D::MemoryProperty: HostVisible, T: ?Sized {
-    fn drop(&mut self) {
-        let mut access = self.data.memory().access.lock().unwrap();
-        access.count -= 1;
 
-        if access.count == 0 {
-            unsafe {
-                self.data.device().handle
-                    .unmap_memory(self.data.memory().handle);
+        pub fn transfer_src(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::TRANSFER_SRC
             }
         }
+        pub fn transfer_dst(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::TRANSFER_DST
+            }
+        }
+        pub fn uniform_texel_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER
+            }
+        }
+        pub fn storage_texel_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
+            }
+        }
+        pub fn uniform_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::UNIFORM_BUFFER
+            }
+        }
+        pub fn storage_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::STORAGE_BUFFER
+            }
+        }
+        pub fn index_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::INDEX_BUFFER
+            }
+        }
+        pub fn vertex_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::VERTEX_BUFFER
+            }
+        }
+        pub fn indirect_buffer(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::INDIRECT_BUFFER
+            }
+        }
+        pub fn transform_feedback_buffer_ext(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::TRANSFORM_FEEDBACK_BUFFER_EXT
+            }
+        }
+        pub fn transform_feedback_counter_buffer_ext(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::TRANSFORM_FEEDBACK_COUNTER_BUFFER_EXT
+            }
+        }
+        pub fn conditional_rendering_ext(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::CONDITIONAL_RENDERING_EXT
+            }
+        }
+        pub fn ray_tracing_nv(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::RAY_TRACING_NV
+            }
+        }
+        pub fn shader_device_address_ext(self) -> Self {
+            BufferUsage {
+                flags: self.flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_EXT
+            }
+        }
+        pub fn build(self) -> vk::BufferUsageFlags { self.flags }
     }
 }
-

@@ -1,4 +1,3 @@
-use std::ops;
 use std::fmt;
 use std::alloc::Layout;
 use std::cell::RefCell;
@@ -8,7 +7,7 @@ use std::sync::Mutex;
 pub unsafe trait Allocator {
     type Identifier;
     fn size(&self) -> u64;
-    fn alloc(&self, layout: Layout) -> Result<(ops::Range<u64>, Self::Identifier), AllocErr>;
+    fn alloc(&self, layout: Layout) -> Result<(u64, Self::Identifier), AllocErr>;
     fn dealloc(&self, id: &Self::Identifier);
 }
 
@@ -51,7 +50,7 @@ impl BuddyAllocator<()> {
 unsafe impl Allocator for BuddyAllocator<RefCell<BuddyAllocatorInner>> {
     type Identifier = BuddyAllocIdentifier;
     fn size(&self) -> u64 { self.0.borrow().size() }
-    fn alloc(&self, layout: Layout) -> Result<(ops::Range<u64>, Self::Identifier), AllocErr> {
+    fn alloc(&self, layout: Layout) -> Result<(u64, Self::Identifier), AllocErr> {
         self.0.borrow_mut().alloc(layout)
     }
     fn dealloc(&self, id: &Self::Identifier) {
@@ -62,7 +61,7 @@ unsafe impl Allocator for BuddyAllocator<RefCell<BuddyAllocatorInner>> {
 unsafe impl Allocator for BuddyAllocator<Mutex<BuddyAllocatorInner>> {
     type Identifier = BuddyAllocIdentifier;
     fn size(&self) -> u64 { self.0.lock().unwrap().size() }
-    fn alloc(&self, layout: Layout) -> Result<(ops::Range<u64>, Self::Identifier), AllocErr> {
+    fn alloc(&self, layout: Layout) -> Result<(u64, Self::Identifier), AllocErr> {
         self.0.lock().unwrap().alloc(layout)
     }
     fn dealloc(&self, id: &Self::Identifier) {
@@ -88,9 +87,7 @@ impl BuddyAllocatorInner {
     fn size(&self) -> u64 { self.block_size * 2_u64.pow(self.order) }
 
     /// TODO: check alignment.
-    fn alloc(&mut self, layout: Layout)
-        -> Result<(ops::Range<u64>, BuddyAllocIdentifier), AllocErr>
-    {
+    fn alloc(&mut self, layout: Layout) -> Result<(u64, BuddyAllocIdentifier), AllocErr> {
         let required_order = (0..self.order)
             .try_for_each(|order| {
                 if layout.size() <= self.block_size as usize * 2_usize.pow(order) {
@@ -107,17 +104,14 @@ impl BuddyAllocatorInner {
         let alloc_size = self.block_size * 2_u64.pow(required_order);
         match self.unused[order_index].pop() {
             Some(index) => {
-                let range_start = index as u64 * alloc_size;
-                let range = range_start .. range_start + alloc_size;
+                let address = index as u64 * alloc_size;
                 self.used[order_index].push(index);
-                Ok((range, BuddyAllocIdentifier::new(required_order, index)))
+                Ok((address, BuddyAllocIdentifier::new(required_order, index)))
             },
             None => {
                 for big_buddy_order in order_index + 1..self.order as usize {
                     if self.unused[big_buddy_order].last().is_some() {
                         let big_buddy_index = self.unused[big_buddy_order].pop().unwrap();
-                        let range_start = self.block_size * 2_u64.pow(big_buddy_order as u32);
-                        let range = range_start .. range_start + alloc_size;
 
                         let (_, index) = (0 .. big_buddy_order - order_index)
                             .fold((big_buddy_order - 1, big_buddy_index << 1), |(order, index), _| {
@@ -126,7 +120,9 @@ impl BuddyAllocatorInner {
                             });
                         self.used[order_index].push(index >> 1);
 
-                        return Ok((range, BuddyAllocIdentifier::new(order_index as u32, index >> 1)));
+                        let address = self.block_size * 2_u64.pow(big_buddy_order as u32);
+                        let ident = BuddyAllocIdentifier::new(order_index as u32, index >> 1);
+                        return Ok((address, ident));
                     }
                 }
 
