@@ -7,11 +7,9 @@ use super::*;
 use std::ops::Range;
 
 pub struct Image<I, D, M, A, E> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
     A: Allocator,
-    E: Extent,
 {
     _marker: PhantomData<(I, D, A)>,
     memory: M,
@@ -27,12 +25,10 @@ pub struct Image<I, D, M, A, E> where
 }
 
 pub struct ImageView<I, D, M, Im, A, E> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
-    Im: Borrow<Image<I, D, M, A, E>> + Deref<Target = Image<I, D, M, A, E>>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    Im: Borrow<Image<I, D, M, A, E>>,
     A: Allocator,
-    E: Extent,
 {
     _marker: PhantomData<(I, D, M, A, E)>,
     image: Im,
@@ -42,9 +38,9 @@ pub struct ImageView<I, D, M, Im, A, E> where
 }
 
 impl<I, D, M, A, E> Image<I, D, M, A, E> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
     A: Allocator,
     E: Extent,
 {
@@ -82,20 +78,20 @@ impl<I, D, M, A, E> Image<I, D, M, A, E> where
             p_queue_family_indices: queue_families.as_ptr(),
         };
 
-        let device = &memory.device;
+        let device = &memory.borrow().device.borrow();
         let handle = unsafe { device.handle.create_image(&info, None).unwrap() };
 
         // TODO: Bind image to device memory and alloc from allocator in device memory.
         let requirements = unsafe { device.handle.get_image_memory_requirements(handle) };
 
-        assert_ne!(1 << memory.type_index & requirements.memory_type_bits, 0);
+        assert_ne!(1 << memory.borrow().type_index & requirements.memory_type_bits, 0);
 
         let layout = Layout::from_size_align(
             requirements.size as usize,
             requirements.alignment as usize,
         ).unwrap();
 
-        let (offset, ident) = match memory.allocator.alloc(layout) {
+        let (offset, ident) = match memory.borrow().allocator.alloc(layout) {
             Ok(ok) => ok,
             Err(e) => {
                 unsafe { device.handle.destroy_image(handle, None); }
@@ -105,7 +101,7 @@ impl<I, D, M, A, E> Image<I, D, M, A, E> where
 
         unsafe {
             device.handle
-                .bind_image_memory(handle, memory.handle, offset)
+                .bind_image_memory(handle, memory.borrow().handle, offset)
                 .unwrap()
         }
 
@@ -123,11 +119,14 @@ impl<I, D, M, A, E> Image<I, D, M, A, E> where
             array_layers,
         }
     }
-
+}
+impl<I, D, M, A, E> Image<I, D, M, A, E> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    A: Allocator,
+{
     #[inline]
-    pub fn extent(&self) -> vk::Extent3D { self.extent.to_vk_extent_3d() }
-    #[inline]
-    pub fn memory(&self) -> &DeviceMemory<I, D, A> { &self.memory }
+    pub fn memory(&self) -> &DeviceMemory<I, D, A> { &self.memory.borrow() }
     #[inline]
     pub fn handle(&self) -> vk::Image { self.handle }
     #[inline]
@@ -139,25 +138,32 @@ impl<I, D, M, A, E> Image<I, D, M, A, E> where
     #[inline]
     pub fn array_layers(&self) -> u32 { self.array_layers }
 }
-
-impl<I, D, M, A, E> Drop for Image<I, D, M, A, E> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
+impl<I, D, M, A, E> Image<I, D, M, A, E> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
     A: Allocator,
     E: Extent,
 {
+    #[inline]
+    pub fn extent(&self) -> vk::Extent3D { self.extent.to_vk_extent_3d() }
+}
+
+impl<I, D, M, A, E> Drop for Image<I, D, M, A, E> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    A: Allocator,
+{
     fn drop(&mut self) {
-        unsafe { self.memory.device.handle.destroy_image(self.handle, None); }
-        self.memory.allocator.dealloc(&self.ident);
+        unsafe { self.memory.borrow().device.borrow().handle.destroy_image(self.handle, None); }
+        self.memory.borrow().allocator.dealloc(&self.ident);
     }
 }
 
 impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
-    Im: Borrow<Image<I, D, M, A, E>> + Deref<Target = Image<I, D, M, A, E>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    Im: Borrow<Image<I, D, M, A, E>>,
     A: Allocator,
     E: Extent,
 {
@@ -169,18 +175,19 @@ impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
     ) -> Self {
         // TODO: consider component mapping.
 
+        let image_ref = image.borrow();
         let (base_array_layer, layer_count) = layer_range.base_layer_and_count();
 
-        assert!(mip_range.end <= image.mip_levels);
-        assert!(base_array_layer + layer_count <= image.array_layers);
+        assert!(mip_range.end <= image_ref.mip_levels);
+        assert!(base_array_layer + layer_count <= image_ref.array_layers);
 
         let info = vk::ImageViewCreateInfo {
             s_type: StructureType::IMAGE_VIEW_CREATE_INFO,
             p_next: ptr::null(),
             flags: vk::ImageViewCreateFlags::empty(),
-            image: image.handle,
+            image: image_ref.handle,
             view_type: layer_range.view_type(),
-            format: image.format,
+            format: image_ref.format,
             components: vk::ComponentMapping {
                 r: vk::ComponentSwizzle::IDENTITY,
                 g: vk::ComponentSwizzle::IDENTITY,
@@ -197,7 +204,7 @@ impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
         };
 
         let handle = unsafe {
-            image.memory.device.handle.create_image_view(&info, None).unwrap()
+            image_ref.memory.borrow().device.borrow().handle.create_image_view(&info, None).unwrap()
         };
 
         Self {
@@ -208,33 +215,48 @@ impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
             layer_range: layer_range.layer_range()
         }
     }
-
+}
+impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    Im: Borrow<Image<I, D, M, A, E>>,
+    A: Allocator,
+{
     #[inline]
-    pub fn image(&self) -> &Image<I, D, M, A, E> { &self.image }
+    pub fn image(&self) -> &Image<I, D, M, A, E> { &self.image.borrow() }
     #[inline]
     pub fn handle(&self) -> vk::ImageView { self.handle }
     #[inline]
-    pub fn extent(&self) -> vk::Extent3D { self.image.extent.to_vk_extent_3d() }
+    pub fn format(&self) -> vk::Format { self.image.borrow().format }
     #[inline]
-    pub fn format(&self) -> vk::Format { self.image.format }
-    #[inline]
-    pub fn samples(&self) -> vk::SampleCountFlags { self.image.samples }
+    pub fn samples(&self) -> vk::SampleCountFlags { self.image.borrow().samples }
     #[inline]
     pub fn mip_range(&self) -> &Range<u32> { &self.mip_range }
     #[inline]
     pub fn layer_range(&self) -> &Range<u32> { &self.layer_range }
 }
-
-impl<I, D, M, Im, A, E> Drop for ImageView<I, D, M, Im, A, E> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, A>> + Deref<Target = DeviceMemory<I, D, A>>,
-    Im: Borrow<Image<I, D, M, A, E>> + Deref<Target = Image<I, D, M, A, E>>,
+impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    Im: Borrow<Image<I, D, M, A, E>>,
     A: Allocator,
     E: Extent,
 {
+    #[inline]
+    pub fn extent(&self) -> vk::Extent3D { self.image.borrow().extent.to_vk_extent_3d() }
+}
+
+impl<I, D, M, Im, A, E> Drop for ImageView<I, D, M, Im, A, E> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, A>>,
+    Im: Borrow<Image<I, D, M, A, E>>,
+    A: Allocator,
+{
     fn drop(&mut self) {
-        unsafe { self.image.memory.device.handle.destroy_image_view(self.handle, None); }
+        unsafe {
+            self.image.borrow().memory.borrow().device.borrow().handle
+                .destroy_image_view(self.handle, None);
+        }
     }
 }
 
@@ -247,57 +269,37 @@ mod usage {
     }
 
     impl ImageUsage {
-        pub fn builder() -> Self { ImageUsage { flags: vk::ImageUsageFlags::empty() } }
-        pub fn transfer_src(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::TRANSFER_SRC,
-            }
+        pub fn vk_flags(&self) -> vk::ImageUsageFlags { self.flags }
+        pub fn empty() -> Self { ImageUsage { flags: vk::ImageUsageFlags::empty() } }
+        pub fn transfer_src(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::TRANSFER_SRC; self
         }
-        pub fn transfer_dst(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::TRANSFER_DST,
-            }
+        pub fn transfer_dst(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::TRANSFER_DST; self
         }
-        pub fn sampled(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::SAMPLED,
-            }
+        pub fn sampled(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::SAMPLED; self
         }
-        pub fn storage(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::STORAGE,
-            }
+        pub fn storage(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::STORAGE; self
         }
-        pub fn color_attachment(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            }
+        pub fn color_attachment(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::COLOR_ATTACHMENT; self
         }
-        pub fn depth_stencil_attachment(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            }
+        pub fn depth_stencil_attachment(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT; self
         }
-        pub fn transient_attachment(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::TRANSIENT_ATTACHMENT,
-            }
+        pub fn transient_attachment(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::TRANSIENT_ATTACHMENT; self
         }
-        pub fn input_attachment(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::INPUT_ATTACHMENT,
-            }
+        pub fn input_attachment(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::INPUT_ATTACHMENT; self
         }
-        pub fn shading_rate_image_nv(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::SHADING_RATE_IMAGE_NV,
-            }
+        pub fn shading_rate_image_nv(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::SHADING_RATE_IMAGE_NV; self
         }
-        pub fn fragment_density_map_ext(self) -> Self {
-            ImageUsage {
-                flags: self.flags | vk::ImageUsageFlags::FRAGMENT_DENSITY_MAP_EXT,
-            }
+        pub fn fragment_density_map_ext(&mut self) -> &mut Self {
+            self.flags |= vk::ImageUsageFlags::FRAGMENT_DENSITY_MAP_EXT; self
         }
-        pub fn build(self) -> vk::ImageUsageFlags { self.flags }
     }
 }

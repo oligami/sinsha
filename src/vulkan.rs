@@ -4,17 +4,23 @@
 //! # Wrapping Policy
 //! This wrapper is not for safety. It's make only easy to use.
 //! Lifetime of all Vulkan API objects must be
+//!
+//! TODO: Trait Borders are too strict. MUST BE CORRECTED.
+//! follow recommended three rules on STRUCT-BOUNDS below.
+//! https://sinkuu.github.io/api-guidelines/future-proofing.html#c-struct-bounds
 
 pub mod utility;
 pub mod device_memory;
-pub mod swapchain;
-pub mod render_pass;
-pub mod framebuffer;
-pub mod descriptor;
-pub mod pipeline;
-pub mod vertex;
-pub mod command;
-pub mod sync;
+//pub mod swapchain;
+//pub mod render_pass;
+//pub mod framebuffer;
+//pub mod descriptor;
+//pub mod pipeline;
+pub mod render;
+pub mod device;
+//pub mod vertex;
+//pub mod command;
+//pub mod sync;
 
 pub use device_memory::buffer;
 pub use device_memory::image;
@@ -38,9 +44,6 @@ use winit::window::Window;
 use std::ptr;
 use std::ffi::CString;
 use std::marker::PhantomData;
-use std::sync::Arc;
-
-use std::ops::Deref;
 use std::borrow::Borrow;
 
 pub struct Instance {
@@ -56,32 +59,29 @@ pub struct PhysicalDevice {
     queue_families: Vec<vk::QueueFamilyProperties>,
 }
 
-pub struct DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance> {
-    instance: PhantomData<I>,
+pub struct DebugEXT<I> {
+    instance: I,
     report_loader: ext::DebugReport,
     report: vk::DebugReportCallbackEXT,
     utils_loader: ext::DebugUtils,
     utils: vk::DebugUtilsMessengerEXT,
 }
 
-pub struct SurfaceKHR<I> where I: Borrow<Instance> + Deref<Target = Instance> {
+pub struct SurfaceKHR<I> {
     instance: I,
     loader: khr::Surface,
     handle: vk::SurfaceKHR,
     window: Window,
 }
 
-pub struct Device<I> where I: Borrow<Instance> + Deref<Target = Instance> {
+pub struct Device<I> {
     instance: I,
     physical_device_index: usize,
     handle: VkDevice,
 }
 
-pub struct Queue<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-{
-    _marker: PhantomData<I>,
+pub struct Queue<I, D> where D: Borrow<Device<I>> {
+    _instance: PhantomData<I>,
     device: D,
     handle: vk::Queue,
     family_index: u32,
@@ -187,13 +187,12 @@ impl Instance {
 }
 
 impl Drop for Instance {
-    fn drop(&mut self) {
-        unsafe { self.handle.destroy_instance(None); }
-    }
+    fn drop(&mut self) { unsafe { self.handle.destroy_instance(None); } }
 }
 
-impl<I> DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance> {
+impl<I> DebugEXT<I> where I: Borrow<Instance> {
     pub fn new(instance: I) -> Self {
+        let instance_ref = instance.borrow();
         let info = vk::DebugReportCallbackCreateInfoEXT::builder()
             .flags(
                 vk::DebugReportFlagsEXT::ERROR
@@ -202,7 +201,7 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance> {
             )
             .pfn_callback(Some(Self::report_callback));
 
-        let report_loader = ext::DebugReport::new(&instance.entry, &instance.handle);
+        let report_loader = ext::DebugReport::new(&instance_ref.entry, &instance_ref.handle);
         let report = unsafe { report_loader.create_debug_report_callback(&info, None).unwrap() };
 
         let info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
@@ -218,10 +217,10 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance> {
             )
             .pfn_user_callback(Some(Self::utils_callback));
 
-        let utils_loader = ext::DebugUtils::new(&instance.entry, &instance.handle);
+        let utils_loader = ext::DebugUtils::new(&instance_ref.entry, &instance_ref.handle);
         let utils = unsafe { utils_loader.create_debug_utils_messenger(&info, None).unwrap() };
 
-        Self { instance: PhantomData, report_loader, report, utils_loader, utils }
+        Self { instance, report_loader, report, utils_loader, utils }
     }
 
     unsafe extern "system" fn report_callback(
@@ -281,7 +280,7 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance> {
     }
 }
 
-impl<I> Drop for DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance> {
+impl<I> Drop for DebugEXT<I> {
     fn drop(&mut self) {
         unsafe {
             self.report_loader.destroy_debug_report_callback(self.report, None);
@@ -290,10 +289,14 @@ impl<I> Drop for DebugEXT<I> where I: Borrow<Instance> + Deref<Target = Instance
     }
 }
 
-impl<I> SurfaceKHR<I> where I: Borrow<Instance> + Deref<Target = Instance> {
+impl<I> SurfaceKHR<I> where I: Borrow<Instance> {
     pub fn new(instance: I, window: Window) -> Self {
-        let loader = khr::Surface::new(&instance.entry, &instance.handle);
-        let handle = unsafe { Self::handle(&instance.entry, &instance.handle, &window) };
+        let (loader, handle) = {
+            let instance = instance.borrow();
+            let loader = khr::Surface::new(&instance.entry, &instance.handle);
+            let handle = unsafe { Self::handle(&instance.entry, &instance.handle, &window) };
+            (loader, handle)
+        };
 
         Self { instance, loader, handle, window }
     }
@@ -317,13 +320,11 @@ impl<I> SurfaceKHR<I> where I: Borrow<Instance> + Deref<Target = Instance> {
     }
 }
 
-impl<I> Drop for SurfaceKHR<I> where I: Borrow<Instance> + Deref<Target = Instance> {
-    fn drop(&mut self) {
-        unsafe { self.loader.destroy_surface(self.handle, None); }
-    }
+impl<I> Drop for SurfaceKHR<I> {
+    fn drop(&mut self) { unsafe { self.loader.destroy_surface(self.handle, None); } }
 }
 
-impl<I> Device<I> where I: Borrow<Instance> + Deref<Target = Instance> {
+impl<I> Device<I> where I: Borrow<Instance> {
     pub fn new(
         instance: I,
         physical_device_index: usize,
@@ -347,9 +348,9 @@ impl<I> Device<I> where I: Borrow<Instance> + Deref<Target = Instance> {
             .queue_create_infos(&queue_infos);
 
         let handle = unsafe {
-            instance.handle
+            instance.borrow().handle
                 .create_device(
-                    instance.physical_devices[physical_device_index].handle,
+                    instance.borrow().physical_devices[physical_device_index].handle,
                     &*device_info,
                     None,
                 )
@@ -367,24 +368,20 @@ impl<I> Device<I> where I: Borrow<Instance> + Deref<Target = Instance> {
     }
 }
 
-impl<I> Drop for Device<I> where I: Borrow<Instance> + Deref<Target = Instance> {
-    fn drop(&mut self) {
-        unsafe { self.handle.destroy_device(None); }
-    }
+impl<I> Drop for Device<I> {
+    #[inline]
+    fn drop(&mut self) { unsafe { self.handle.destroy_device(None); } }
 }
 
-impl<I, D> Queue<I, D>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>
-{
+impl<I, D> Queue<I, D> where D: Borrow<Device<I>> {
     pub fn from_device(device: D, info: &QueueInfo, index: usize) -> Self {
         assert!((index as u32) < info.vk_info.queue_count, "Index is out of Queue count.");
         let handle = unsafe {
-            device.handle.get_device_queue(info.family_index as u32, index as u32)
+            device.borrow().handle.get_device_queue(info.family_index as u32, index as u32)
         };
 
         Queue {
-            _marker: PhantomData,
+            _instance: PhantomData,
             device,
             handle,
             family_index: info.family_index as u32,
@@ -392,11 +389,11 @@ impl<I, D> Queue<I, D>
     }
 
     pub unsafe fn submit(&mut self, infos: &[vk::SubmitInfo], fence: vk::Fence) {
-        self.device.handle.queue_submit(self.handle, infos, fence).unwrap();
+        self.device.borrow().handle.queue_submit(self.handle, infos, fence).unwrap();
     }
 
     pub unsafe fn wait_idle(&self) {
-        self.device.handle.device_wait_idle().unwrap()
+        self.device.borrow().handle.device_wait_idle().unwrap()
     }
 
     #[inline]
@@ -405,13 +402,13 @@ impl<I, D> Queue<I, D>
     pub fn family_index(&self) -> u32 { self.family_index }
 }
 
-impl<'i, 'd> Queue<&'i Instance, &'d Device<&'i Instance>> {
+impl<'d> Queue<(), &'d Device<()>> {
     pub fn get_queue_info_with_surface_support<I>(
         instance: &Instance,
         physical_device_index: usize,
         surface: &SurfaceKHR<I>,
         flags: vk::QueueFlags,
-    ) -> Option<QueueInfo> where I: Borrow<Instance> + Deref<Target = Instance> {
+    ) -> Option<QueueInfo> where I: Borrow<Instance> {
         let physical_device = &instance.physical_devices[physical_device_index];
 
         physical_device.queue_families

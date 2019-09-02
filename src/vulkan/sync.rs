@@ -3,8 +3,8 @@ use super::*;
 use std::time::Duration;
 
 pub struct Semaphore<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     _marker: PhantomData<I>,
     device: D,
@@ -12,8 +12,8 @@ pub struct Semaphore<I, D> where
 }
 
 pub struct Fence<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     _marker: PhantomData<I>,
     device: D,
@@ -26,12 +26,12 @@ pub enum FenceState {
 }
 
 impl<I, D> Semaphore<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     pub fn new(device: D) -> Self {
         let info = vk::SemaphoreCreateInfo::default();
-        let handle = unsafe { device.handle.create_semaphore(&info, None).unwrap() };
+        let handle = unsafe { device.borrow().handle.create_semaphore(&info, None).unwrap() };
 
         Semaphore { _marker: PhantomData, device, handle }
     }
@@ -41,22 +41,22 @@ impl<I, D> Semaphore<I, D> where
 }
 
 impl<I, D> Drop for Semaphore<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     fn drop(&mut self) {
-        unsafe { self.device.handle.destroy_semaphore(self.handle, None); }
+        unsafe { self.device.borrow().handle.destroy_semaphore(self.handle, None); }
     }
 }
 
 impl<I, D> Fence<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     fn new(device: D, flags: vk::FenceCreateFlags) -> Self {
         let info = vk::FenceCreateInfo::builder()
             .flags(flags);
-        let handle = unsafe { device.handle.create_fence(&info, None).unwrap() };
+        let handle = unsafe { device.borrow().handle.create_fence(&info, None).unwrap() };
 
         Fence { _marker: PhantomData, device, handle }
     }
@@ -71,7 +71,7 @@ impl<I, D> Fence<I, D> where
 
     pub fn poll(&self) -> FenceState {
         unsafe {
-            match self.device.handle.get_fence_status(self.handle) {
+            match self.device.borrow().handle.get_fence_status(self.handle) {
                 Ok(_) => FenceState::Signaled,
                 Err(vk::Result::NOT_READY) => FenceState::UnSignaled,
                 Err(vk::Result::ERROR_DEVICE_LOST) => {
@@ -84,18 +84,18 @@ impl<I, D> Fence<I, D> where
 
     pub fn try_wait(&self, timeout: Duration) {
         unsafe {
-            self.device.handle
+            self.device.borrow().handle
                 .wait_for_fences(&[self.handle], false, timeout.as_nanos() as u64)
                 .unwrap();
         }
     }
 
     pub fn wait(&self) {
-        unsafe { self.device.handle.wait_for_fences(&[self.handle], false, !0).unwrap(); }
+        unsafe { self.device.borrow().handle.wait_for_fences(&[self.handle], false, !0).unwrap(); }
     }
 
     pub unsafe fn reset(&self) {
-        self.device.handle.reset_fences(&[self.handle]).unwrap();
+        self.device.borrow().handle.reset_fences(&[self.handle]).unwrap();
     }
 
     #[inline]
@@ -103,10 +103,10 @@ impl<I, D> Fence<I, D> where
 }
 
 impl<I, D> Drop for Fence<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     fn drop(&mut self) {
-        unsafe { self.device.handle.destroy_fence(self.handle, None); }
+        unsafe { self.device.borrow().handle.destroy_fence(self.handle, None); }
     }
 }

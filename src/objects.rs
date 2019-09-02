@@ -2,6 +2,16 @@ use crate::linear_algebra::*;
 
 use std::default::Default;
 
+pub struct Object {
+    vertex: Vertex,
+    index: u32,
+    pipeline: Pipeline,
+    descriptor_set: (),
+    push_constant: (),
+}
+
+pub enum Pipeline {}
+
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Vertex {
     pub position: XYZ<f32>,

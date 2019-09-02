@@ -6,11 +6,8 @@ use render_pass::RenderPass;
 
 use std::ops::Range;
 
-pub struct PipelineLayout<I, D, S> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    S: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-{
+pub struct PipelineLayout<I, D, S> where D: Borrow<Device<I>> {
+    _marker: PhantomData<I>,
     device: D,
     set_layouts: Vec<S>,
     handle: vk::PipelineLayout,
@@ -24,27 +21,30 @@ pub struct PipelineLayoutBuilder<S> {
 
 pub struct ComputePipeline;
 
-pub struct GraphicsPipeline<I, D, R, S, L> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    R: Borrow<RenderPass<I, D>> + Deref<Target = RenderPass<I, D>>,
-    S: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-    L: Borrow<PipelineLayout<I, D, S>> + Deref<Target = PipelineLayout<I, D, S>>,
+pub struct GraphicsPipelineCreateInfo<'a> {
+    info: vk::GraphicsPipelineCreateInfo,
+    vertex_input: Option<&'a vk::PipelineVertexInputStateCreateInfoBuilder<'a>>,
+    input_assembly: Option<&'a vk::PipelineInputAssemblyStateCreateInfoBuilder<'a>>,
+    tessellation: Option<&'a vk::PipelineTessellationStateCreateInfoBuilder<'a>>,
+    viewport: Option<&'a vk::PipelineViewportStateCreateInfoBuilder<'a>>,
+    rasterization: Option<&'a vk::PipelineRasterizationStateCreateInfoBuilder<'a>>,
+    multisample: Option<&'a vk::PipelineMultisampleStateCreateInfoBuilder<'a>>,
+    depth_stencil: Option<&'a vk::PipelineDepthStencilStateCreateInfoBuilder<'a>>,
+    color_blend: Option<&'a vk::PipelineColorBlendStateCreateInfoBuilder<'a>>,
+    dynamic: Option<&'a vk::PipelineDynamicStateCreateInfoBuilder<'a>>,
+}
+
+pub struct GraphicsPipeline<I, D, R, L> where
+    D: Borrow<Device<I>>,
+    R: Borrow<RenderPass<I, D>>,
 {
-    _marker: PhantomData<(I, D, S)>,
+    _marker: PhantomData<(I, D)>,
     render_pass: R,
     layout: L,
     handle: vk::Pipeline,
 }
 
-pub struct GraphicsPipelineBuilder<'a> {
-    info: vk::GraphicsPipelineCreateInfoBuilder<'a>,
-}
-
-pub struct ShaderStages<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-{
+pub struct ShaderStages<I, D> where D: Borrow<Device<I>> {
     _marker: PhantomData<I>,
     device: D,
     shader_stages: Vec<vk::PipelineShaderStageCreateInfo>,
@@ -74,9 +74,9 @@ pub struct VertexTest {
 }
 
 impl<I, D, S> PipelineLayout<I, D, S> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    S: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
+    S: Borrow<DescriptorSetLayout<I, D>>,
 {
     pub fn new(
         device: D,
@@ -84,37 +84,122 @@ impl<I, D, S> PipelineLayout<I, D, S> where
         push_constants: Vec<vk::PushConstantRange>,
     ) -> Self {
         let layout_handles = set_layouts.iter()
-            .map(|layout| layout.handle)
+            .map(|layout| layout.borrow().handle())
             .collect::<Vec<_>>();
         let info = vk::PipelineLayoutCreateInfo::builder()
             .push_constant_ranges(&push_constants[..])
             .set_layouts(&layout_handles[..]);
 
         let handle = unsafe {
-            device.handle.create_pipeline_layout(&info, None).unwrap()
+            device.borrow().handle.create_pipeline_layout(&info, None).unwrap()
         };
 
-        Self { device, handle, set_layouts, push_constants }
+        Self { _marker: PhantomData, device, handle, set_layouts, push_constants }
     }
 }
 
 
-impl<I, D, S> Drop for PipelineLayout<I, D, S> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    S: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-{
+impl<I, D, S> Drop for PipelineLayout<I, D, S> where D: Borrow<Device<I>> {
     fn drop(&mut self) {
-        unsafe { self.device.handle.destroy_pipeline_layout(self.handle, None); }
+        unsafe { self.device.borrow().handle.destroy_pipeline_layout(self.handle, None); }
     }
 }
 
-impl<I, D, R, S, L> GraphicsPipeline<I, D, R, S, L> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    R: Borrow<RenderPass<I, D>> + Deref<Target = RenderPass<I, D>>,
-    S: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-    L: Borrow<PipelineLayout<I, D, S>> + Deref<Target = PipelineLayout<I, D, S>>,
+impl<'a> GraphicsPipelineCreateInfo<'a> {
+    pub fn vertex_input(
+        &mut self,
+        state: &'a vk::PipelineVertexInputStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_vertex_input_state = state as *const _;
+        self.vertex_input = Some(state);
+        self
+    }
+    pub fn input_assembly(
+        &mut self,
+        state: &'a vk::PipelineInputAssemblyStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_input_assembly_state = state as _;
+        self.input_assembly = Some(state);
+        self
+    }
+    pub fn tessellation(
+        &mut self,
+        state: &'a vk::PipelineTessellationStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_tessellation_state = state as _;
+        self.tessellation = Some(state);
+        self
+    }
+    pub fn viewport(
+        &mut self,
+        state: &'a vk::PipelineViewportStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_viewport_state = state as _;
+        self.viewport = Some(state);
+        self
+    }
+    pub fn rasterization(
+        &mut self,
+        state: &'a vk::PipelineRasterizationStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_rasterization_state = state as _;
+        self.rasterization = Some(state);
+        self
+    }
+    pub fn multisample(
+        &mut self,
+        state: &'a vk::PipelineMultisampleStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_multisample_state = state as _;
+        self.multisample = Some(state);
+        self
+    }
+    pub fn depth_stencil(
+        &mut self,
+        state: &'a vk::PipelineDepthStencilStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_depth_stencil_state = state as _;
+        self.depth_stencil = Some(state);
+        self
+    }
+    pub fn color_blend(
+        &mut self,
+        state: &'a vk::PipelineColorBlendStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_color_blend_state = state as _;
+        self.color_blend = Some(state);
+        self
+    }
+    pub fn dynamic(
+        &mut self,
+        state: &'a vk::PipelineDynamicStateCreateInfoBuilder<'a>,
+    ) -> &mut Self {
+        self.info.p_dynamic_state = state as _;
+        self.dynamic = Some(state);
+        self
+    }
+    pub unsafe fn create<I, D, R, S, L>(
+        &self,
+        shader_stages: ShaderStages<I, D>,
+        (render_pass, subpass): (R, u32),
+        layout: L,
+        cache: Option<vk::PipelineCache>,
+    ) -> GraphicsPipeline<I, D, R, L> where
+        I: Borrow<Instance>,
+        D: Borrow<Device<I>>,
+        R: Borrow<RenderPass<I, D>>,
+        S: Borrow<DescriptorSetLayout<I, D>>,
+        L: Borrow<PipelineLayout<I, D, S>>,
+    {
+        let device = render_pass.borrow().device().handle.create_graphics_pipelines();
+        unimplemented!()
+    }
+}
+
+impl<I, D, R, L> GraphicsPipeline<I, D, R, L> where
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
+    R: Borrow<RenderPass<I, D>>,
 {
     pub unsafe fn new(
         mut info: vk::GraphicsPipelineCreateInfo,
@@ -126,12 +211,12 @@ impl<I, D, R, S, L> GraphicsPipeline<I, D, R, S, L> where
     ) -> Self {
         info.stage_count = shader_stages.shader_stages.len() as u32;
         info.p_stages = shader_stages.shader_stages.as_ptr();
-        info.render_pass = render_pass.handle();
+        info.render_pass = render_pass.borrow().handle();
         info.subpass = subpass;
-        info.layout = layout.handle;
+        info.layout = layout.borrow().handle;
 
         let handle = unsafe {
-            render_pass.device().handle
+            render_pass.borrow().device().handle
                 .create_graphics_pipelines(vk::PipelineCache::null(), &[info], None)
                 .unwrap()[0]
         };
@@ -143,22 +228,19 @@ impl<I, D, R, S, L> GraphicsPipeline<I, D, R, S, L> where
     pub fn handle(&self) -> vk::Pipeline { self.handle }
 }
 
-impl<I, D, R, S, L> Drop for GraphicsPipeline<I, D, R, S, L> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    R: Borrow<RenderPass<I, D>> + Deref<Target = RenderPass<I, D>>,
-    S: Borrow<DescriptorSetLayout<I, D>> + Deref<Target = DescriptorSetLayout<I, D>>,
-    L: Borrow<PipelineLayout<I, D, S>> + Deref<Target = PipelineLayout<I, D, S>>,
+impl<I, D, R, L> Drop for GraphicsPipeline<I, D, R, L> where
+    D: Borrow<Device<I>>,
+    R: Borrow<RenderPass<I, D>>,
 {
     #[inline]
     fn drop(&mut self) {
-        unsafe { self.layout.device.handle.destroy_pipeline(self.handle, None); }
+        unsafe { self.render_pass.borrow().device().handle.destroy_pipeline(self.handle, None); }
     }
 }
 
 impl<I, D> ShaderStages<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
 {
     pub fn new(device: D) -> Self {
         ShaderStages {
@@ -191,7 +273,7 @@ impl<I, D> ShaderStages<I, D> where
                 p_code: buf.as_ptr() as _,
             };
 
-            unsafe { self.device.handle.create_shader_module(&info, None).unwrap() }
+            unsafe { self.device.borrow().handle.create_shader_module(&info, None).unwrap() }
         };
 
         let invoke_fn_name = CString::new(invoke_fn_name).unwrap();
@@ -238,14 +320,11 @@ impl<I, D> ShaderStages<I, D> where
     }
 }
 
-impl<I, D> Drop for ShaderStages<I, D> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-{
+impl<I, D> Drop for ShaderStages<I, D> where D: Borrow<Device<I>> {
     fn drop(&mut self) {
         self.shader_stage_holders.iter()
             .for_each(|holder| {
-                unsafe { self.device.handle.destroy_shader_module(holder.module, None); }
+                unsafe { self.device.borrow().handle.destroy_shader_module(holder.module, None); }
             })
     }
 }

@@ -3,12 +3,10 @@ pub use usage::BufferUsage;
 use super::*;
 use std::ops;
 
-pub struct Buffer<I, D, M, BA, DA>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
-          BA: Allocator,
-          DA: Allocator,
+pub struct Buffer<I, D, M, BA, DA> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
+    BA: Allocator,
 {
     _marker: PhantomData<(I, D)>,
     memory: M,
@@ -20,14 +18,13 @@ pub struct Buffer<I, D, M, BA, DA>
     allocator: DA,
 }
 
-pub struct Data<I, D, M, B, BA, DA, T>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
-          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
-          BA: Allocator,
-          DA: Allocator,
-          T: ?Sized,
+pub struct Data<I, D, M, B, BA, DA, T> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
+    B: Borrow<Buffer<I, D, M, BA, DA>>,
+    BA: Allocator,
+    DA: Allocator,
+    T: ?Sized,
 {
     _marker: PhantomData<(I, D, M, BA, fn() -> T)>,
     buffer: B,
@@ -49,9 +46,9 @@ pub enum DataErr {
 }
 
 impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
     BA: Allocator,
     DA: Allocator,
 {
@@ -61,7 +58,7 @@ impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
         allocator: DA,
         usage: vk::BufferUsageFlags,
     ) -> Result<Self, BufferErr> {
-        let device = &memory.device.handle;
+        let device = &memory.borrow().device.borrow().handle;
         let sharing_mode = if queue_families.len() == 1 {
             vk::SharingMode::EXCLUSIVE
         } else {
@@ -84,7 +81,7 @@ impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
 
         let memory_requirements = unsafe { device.get_buffer_memory_requirements(handle) };
 
-        if 1 << memory.type_index & memory_requirements.memory_type_bits == 0 {
+        if 1 << memory.borrow().type_index & memory_requirements.memory_type_bits == 0 {
             return Err(BufferErr::IncompatibleMemoryTypeIndex);
         }
 
@@ -93,14 +90,14 @@ impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
             memory_requirements.alignment as usize,
         ).unwrap();
 
-        let (offset, ident) = match memory.allocator.alloc(layout) {
+        let (offset, ident) = match memory.borrow().allocator.alloc(layout) {
             Ok(ok) => ok,
             Err(e) => {
                 unsafe { device.destroy_buffer(handle, None) };
                 return Err(BufferErr::Allocator(e));
             }
         };
-        unsafe { device.bind_buffer_memory(handle, memory.handle, offset)? };
+        unsafe { device.bind_buffer_memory(handle, memory.borrow().handle, offset)? };
 
         let buffer = Self {
             _marker: PhantomData,
@@ -117,7 +114,7 @@ impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
     }
 
     #[inline]
-    pub fn device_memory(&self) -> &DeviceMemory<I, D, BA> { &self.memory }
+    pub fn device_memory(&self) -> &DeviceMemory<I, D, BA> { &self.memory.borrow() }
     #[inline]
     pub fn handle(&self) -> vk::Buffer { self.handle }
     #[inline]
@@ -127,15 +124,14 @@ impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
 }
 
 impl<I, D, M, BA, DA> Drop for Buffer<I, D, M, BA, DA> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
     BA: Allocator,
-    DA: Allocator,
 {
+    #[inline]
     fn drop(&mut self) {
-        unsafe { self.memory.device.handle.destroy_buffer(self.handle, None); }
-        self.memory.allocator.dealloc(&self.ident);
+        unsafe { self.memory.borrow().device.borrow().handle.destroy_buffer(self.handle, None); }
+        self.memory.borrow().allocator.dealloc(&self.ident);
     }
 }
 
@@ -148,20 +144,20 @@ impl From<alloc::AllocErr> for BufferErr {
 
 
 impl<I, D, M, B, BA, DA> Data<I, D, M, B, BA, DA, ()> where
-    I: Borrow<Instance> + Deref<Target = Instance>,
-    D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-    M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
-    B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
+    I: Borrow<Instance>,
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
+    B: Borrow<Buffer<I, D, M, BA, DA>>,
     BA: Allocator,
     DA: Allocator,
 {
     pub fn new<T>(buffer: B) -> Result<Data<I, D, M, B, BA, DA, T>, DataErr> where T: Sized {
         let align_of_t = mem::align_of::<T>();
-        let align = if align_of_t < buffer.align { buffer.align } else { align_of_t };
+        let align = if align_of_t < buffer.borrow().align { buffer.borrow().align } else { align_of_t };
         let size = mem::size_of::<T>();
         let layout = Layout::from_size_align(size, align).unwrap();
 
-        let (offset, ident) = buffer.allocator.alloc(layout)?;
+        let (offset, ident) = buffer.borrow().allocator.alloc(layout)?;
 
         Ok(Data { _marker: PhantomData, buffer, ident, offset, size: size as u64 })
     }
@@ -170,43 +166,41 @@ impl<I, D, M, B, BA, DA> Data<I, D, M, B, BA, DA, ()> where
         where T: Sized
     {
         let align_of_t = mem::align_of::<T>();
-        let align = if align_of_t < buffer.align { buffer.align } else { align_of_t };
+        let align = if align_of_t < buffer.borrow().align { buffer.borrow().align } else { align_of_t };
         let size = mem::size_of::<T>() * len;
         let layout = Layout::from_size_align(size, align).unwrap();
 
-        let (offset, identifier) = buffer.allocator.alloc(layout)?;
+        let (offset, identifier) = buffer.borrow().allocator.alloc(layout)?;
 
         Ok(Data { _marker: PhantomData, buffer, ident: identifier, offset, size: size as u64 })
     }
 }
 
-impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, T>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
-          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
-          BA: Allocator,
-          DA: Allocator,
-          T: ?Sized,
+impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, T> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
+    B: Borrow<Buffer<I, D, M, BA, DA>>,
+    BA: Allocator,
+    DA: Allocator,
+    T: ?Sized,
 {
     #[inline]
-    pub fn buffer(&self) -> &Buffer<I, D, M, BA, DA> { &self.buffer }
+    pub fn buffer(&self) -> &Buffer<I, D, M, BA, DA> { &self.buffer.borrow() }
     #[inline]
     pub fn offset_by_buffer(&self) -> u64 { self.offset }
     #[inline]
-    pub fn offset_by_memory(&self) -> u64 { self.buffer.offset + self.offset }
+    pub fn offset_by_memory(&self) -> u64 { self.buffer.borrow().offset + self.offset }
     #[inline]
     pub fn size(&self) -> u64 { self.size }
 }
 
-impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, [T]>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
-          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
-          BA: Allocator,
-          DA: Allocator,
-          T: Sized,
+impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, [T]> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
+    B: Borrow<Buffer<I, D, M, BA, DA>>,
+    BA: Allocator,
+    DA: Allocator,
+    T: Sized,
 {
     #[inline]
     pub fn len(&self) -> u64 {
@@ -214,18 +208,16 @@ impl<I, D, M, B, BA, DA, T> Data<I, D, M, B, BA, DA, [T]>
     }
 }
 
-impl<I, D, M, B, BA, DA, T> Drop for Data<I, D, M, B, BA, DA, T>
-    where I: Borrow<Instance> + Deref<Target = Instance>,
-          D: Borrow<Device<I>> + Deref<Target = Device<I>>,
-          M: Borrow<DeviceMemory<I, D, BA>> + Deref<Target = DeviceMemory<I, D, BA>>,
-          B: Borrow<Buffer<I, D, M, BA, DA>> + Deref<Target = Buffer<I, D, M, BA, DA>>,
-          BA: Allocator,
-          DA: Allocator,
-          T: ?Sized,
+impl<I, D, M, B, BA, DA, T> Drop for Data<I, D, M, B, BA, DA, T> where
+    D: Borrow<Device<I>>,
+    M: Borrow<DeviceMemory<I, D, BA>>,
+    B: Borrow<Buffer<I, D, M, BA, DA>>,
+    BA: Allocator,
+    DA: Allocator,
+    T: ?Sized,
 {
-    fn drop(&mut self) {
-        self.buffer().allocator.dealloc(&self.ident);
-    }
+    #[inline]
+    fn drop(&mut self) { self.buffer.borrow().allocator.dealloc(&self.ident); }
 }
 
 impl From<alloc::AllocErr> for DataErr {
@@ -239,81 +231,49 @@ mod usage {
     }
 
     impl BufferUsage {
-        pub fn builder() -> Self {
-            BufferUsage { flags: vk::BufferUsageFlags::empty() }
+        pub fn vk_flags(&self) -> vk::BufferUsageFlags { self.flags }
+        pub fn empty() -> Self { BufferUsage { flags: vk::BufferUsageFlags::empty() } }
+        pub fn transfer_src(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::TRANSFER_SRC; self
         }
-
-
-        pub fn transfer_src(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::TRANSFER_SRC
-            }
+        pub fn transfer_dst(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::TRANSFER_DST; self
         }
-        pub fn transfer_dst(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::TRANSFER_DST
-            }
+        pub fn uniform_texel_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER; self
         }
-        pub fn uniform_texel_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::UNIFORM_TEXEL_BUFFER
-            }
+        pub fn storage_texel_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER; self
         }
-        pub fn storage_texel_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::STORAGE_TEXEL_BUFFER
-            }
+        pub fn uniform_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::UNIFORM_BUFFER; self
         }
-        pub fn uniform_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::UNIFORM_BUFFER
-            }
+        pub fn storage_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::STORAGE_BUFFER; self
         }
-        pub fn storage_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::STORAGE_BUFFER
-            }
+        pub fn index_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::INDEX_BUFFER; self
         }
-        pub fn index_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::INDEX_BUFFER
-            }
+        pub fn vertex_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::VERTEX_BUFFER; self
         }
-        pub fn vertex_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::VERTEX_BUFFER
-            }
+        pub fn indirect_buffer(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::INDIRECT_BUFFER; self
         }
-        pub fn indirect_buffer(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::INDIRECT_BUFFER
-            }
+        pub fn transform_feedback_buffer_ext(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::TRANSFORM_FEEDBACK_BUFFER_EXT; self
         }
-        pub fn transform_feedback_buffer_ext(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::TRANSFORM_FEEDBACK_BUFFER_EXT
-            }
+        pub fn transform_feedback_counter_buffer_ext(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::TRANSFORM_FEEDBACK_COUNTER_BUFFER_EXT; self
         }
-        pub fn transform_feedback_counter_buffer_ext(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::TRANSFORM_FEEDBACK_COUNTER_BUFFER_EXT
-            }
+        pub fn conditional_rendering_ext(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::CONDITIONAL_RENDERING_EXT; self
         }
-        pub fn conditional_rendering_ext(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::CONDITIONAL_RENDERING_EXT
-            }
+        pub fn ray_tracing_nv(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::RAY_TRACING_NV; self
         }
-        pub fn ray_tracing_nv(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::RAY_TRACING_NV
-            }
+        pub fn shader_device_address_ext(&mut self) -> &mut Self {
+            self.flags |= vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_EXT; self
         }
-        pub fn shader_device_address_ext(self) -> Self {
-            BufferUsage {
-                flags: self.flags | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS_EXT
-            }
-        }
-        pub fn build(self) -> vk::BufferUsageFlags { self.flags }
     }
 }

@@ -224,7 +224,6 @@ impl Engine {
             ),
         ];
 
-        let count_up = 1000000;
         unsafe {
             let map_memory = device_memory::DeviceMemoryMapper::map(
                 &host_visible_memory,
