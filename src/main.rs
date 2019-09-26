@@ -9,9 +9,6 @@ mod field;
 mod gui;
 //mod interaction;
 
-//use engine::Engine;
-
 fn main() {
-	println!("Hello world!");
-	dbg!(std::mem::size_of::<crate::vulkan::Vulkan>());
+	engine::run();
 }

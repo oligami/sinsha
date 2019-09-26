@@ -13,27 +13,21 @@
 //! Allocating and Deallocating.
 
 //pub mod device_memory;
+mod memory;
 //pub mod render;
 
 use ash::vk;
-use ash::vk::StructureType;
-use ash::extensions::khr;
-use ash::extensions::ext;
 use ash::vk_make_version;
-use ash::Entry;
-use ash::Instance;
-use ash::Device;
-use ash::version::EntryV1_0;
-use ash::version::InstanceV1_0;
-use ash::version::DeviceV1_0;
+use ash::vk::StructureType;
+use ash::extensions::{ khr, ext };
+use ash::{ Entry, Instance, Device };
+use ash::version::{ EntryV1_0, InstanceV1_0, DeviceV1_0 };
 
 use winit::window::Window;
 
 use std::ptr;
 use std::sync::Once;
 use std::ffi::CString;
-use std::marker::PhantomData;
-use std::borrow::Borrow;
 use std::mem::ManuallyDrop;
 
 pub struct Vulkan {
@@ -63,20 +57,23 @@ struct DebugEXT {
     utils: vk::DebugUtilsMessengerEXT,
 }
 
-pub struct Queue<V> {
-    vulkan: V,
-    handle: vk::Queue,
-}
+pub struct Queue(vk::Queue);
 
 impl Vulkan {
-    pub fn new() -> Self {
+    pub fn new(window: Window) -> Self {
         let entry = Entry::new().unwrap();
         let instance = Self::create_instance(&entry);
-        let debug_ext = DebugEXT::new_in_manually_drop(&entry, &instance);
-        let surface = SurfaceKHR::new_in_manually_drop(&entry, &instance, unimplemented!());
+        let debug = DebugEXT::new_in_manually_drop(&entry, &instance);
+        let surface = SurfaceKHR::new_in_manually_drop(&entry, &instance, window);
+        let (physical_device, device) = Self::create_device(&instance, &surface);
 
+        Self { entry, instance, surface, physical_device, device, debug }
+    }
 
-        unimplemented!()
+    pub fn get_queue(&self) -> Queue {
+        let handle = unsafe {
+            self.device.get_device_queue()
+        }
     }
 
     fn create_instance(entry: &Entry) -> Instance {
@@ -124,7 +121,7 @@ impl Vulkan {
         unsafe { entry.create_instance(&instance_info, None).unwrap() }
     }
 
-    fn select_physical_device(instance: &Instance, surface: &SurfaceKHR) {
+    fn create_device(instance: &Instance, surface: &SurfaceKHR) -> (PhysicalDevice, Device) {
         let vk_physical_devices = unsafe { instance.enumerate_physical_devices().unwrap() };
         let (vk_physical_device, queue_family_index) = vk_physical_devices
             .into_iter()
@@ -178,15 +175,25 @@ impl Vulkan {
             .queue_priorities(&queue_priorities[..])
             .build();
 
+        let extensions = [];
+        let layers = if cfg!(debug_assertions) {
+            vec![khr::Swapchain::name().as_ptr()]
+        } else {
+            vec![]
+        };
         let device_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(std::slice::from_ref(&queue_info))
-            .enabled_extension_names(unimplemented!())
-            .enabled_layer_names(unimplemented!())
+            .enabled_extension_names(&extensions[..])
+            .enabled_layer_names(&layers[..])
             .build();
 
+        let device = unsafe {
+            instance
+                .create_device(vk_physical_device, &device_info, None)
+                .unwrap()
+        };
 
-
-        unimplemented!()
+        (physical_device, device)
     }
 }
 
@@ -195,7 +202,7 @@ impl Drop for Vulkan {
         unsafe {
             unsafe { ManuallyDrop::drop(&mut self.surface); }
             // debug is only enabled in debug mode, not in release mode.
-            if cfg!(debug_assertions) { unsafe { ManuallyDrop::drop(&self.debug); } }
+            if cfg!(debug_assertions) { unsafe { ManuallyDrop::drop(&mut self.debug); } }
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
