@@ -13,6 +13,5 @@ mod gui;
 
 fn main() {
 	println!("Hello world!");
-	dbg!(std::mem::size_of::<ash::Device>());
-//	Engine::run();
+	dbg!(std::mem::size_of::<crate::vulkan::Vulkan>());
 }

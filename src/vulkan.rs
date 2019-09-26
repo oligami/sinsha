@@ -12,14 +12,8 @@
 //! ## vk::Buffer
 //! Allocating and Deallocating.
 
-pub mod device_memory;
-pub mod render;
-pub mod device;
-
-pub use device_memory::buffer;
-pub use device_memory::image;
-//pub use shader::pipeline;
-//pub use shader::descriptor;
+//pub mod device_memory;
+//pub mod render;
 
 use ash::vk;
 use ash::vk::StructureType;
@@ -36,27 +30,19 @@ use ash::version::DeviceV1_0;
 use winit::window::Window;
 
 use std::ptr;
+use std::sync::Once;
 use std::ffi::CString;
 use std::marker::PhantomData;
 use std::borrow::Borrow;
+use std::mem::ManuallyDrop;
 
-#[cfg(debug_assertions)]
 pub struct Vulkan {
     entry: Entry,
-    handle: Instance,
-    surface: SurfaceKHR,
+    instance: Instance,
+    surface: ManuallyDrop<SurfaceKHR>,
     physical_device: PhysicalDevice,
     device: Device,
-    debug: DebugEXT,
-}
-
-#[cfg(not(debug_assertions))]
-pub struct Vulkan {
-    entry: Entry,
-    handle: Instance,
-    surface: SurfaceKHR,
-    physical_device: PhysicalDevice,
-    device: Device,
+    debug: ManuallyDrop<DebugEXT>,
 }
 
 struct SurfaceKHR {
@@ -86,8 +72,8 @@ impl Vulkan {
     pub fn new() -> Self {
         let entry = Entry::new().unwrap();
         let instance = Self::create_instance(&entry);
-
-
+        let debug_ext = DebugEXT::new_in_manually_drop(&entry, &instance);
+        let surface = SurfaceKHR::new_in_manually_drop(&entry, &instance, unimplemented!());
 
 
         unimplemented!()
@@ -165,12 +151,13 @@ impl Vulkan {
                         };
 
                         let queue_flags_support = property.queue_flags
-                            .contains(flags);
+                            .contains(vk::QueueFlags::GRAPHICS);
 
                         surface_support && queue_flags_support
                     })
                     .map(|(queue_family_index, _)| (vk_physical_device, queue_family_index as u32))
-            });
+            })
+            .unwrap();
 
         let memory_properties = unsafe {
             instance.get_physical_device_memory_properties(vk_physical_device)
@@ -205,13 +192,19 @@ impl Vulkan {
 
 impl Drop for Vulkan {
     fn drop(&mut self) {
-        unsafe { self.instance.destroy_instance(None); }
+        unsafe {
+            unsafe { ManuallyDrop::drop(&mut self.surface); }
+            // debug is only enabled in debug mode, not in release mode.
+            if cfg!(debug_assertions) { unsafe { ManuallyDrop::drop(&self.debug); } }
+            self.device.destroy_device(None);
+            self.instance.destroy_instance(None);
+        }
         unimplemented!()
     }
 }
 
 impl DebugEXT {
-    pub fn new(entry: &Entry, instance: &Instance) -> Self {
+    pub fn new_in_manually_drop(entry: &Entry, instance: &Instance) -> ManuallyDrop<Self> {
         let info = vk::DebugReportCallbackCreateInfoEXT::builder()
             .flags(
                 vk::DebugReportFlagsEXT::ERROR
@@ -239,7 +232,7 @@ impl DebugEXT {
         let utils_loader = ext::DebugUtils::new(entry, instance);
         let utils = unsafe { utils_loader.create_debug_utils_messenger(&info, None).unwrap() };
 
-        Self { report_loader, report, utils_loader, utils }
+        ManuallyDrop::new(Self { report_loader, report, utils_loader, utils })
     }
 
     unsafe extern "system" fn report_callback(
@@ -309,12 +302,18 @@ impl Drop for DebugEXT {
 }
 
 impl SurfaceKHR {
-    fn new(entry: &Entry, instance: &Instance, window: Window) -> Self {
-        SurfaceKHR {
-            window,
+    fn new_in_manually_drop(
+        entry: &Entry,
+        instance: &Instance,
+        window: Window
+    ) -> ManuallyDrop<Self> {
+        let surface_khr = SurfaceKHR {
             loader: khr::Surface::new(entry, instance),
             handle: unsafe { Self::handle(entry, instance, &window) },
-        }
+            window,
+        };
+
+        ManuallyDrop::new(surface_khr)
     }
 
 
@@ -337,81 +336,10 @@ impl SurfaceKHR {
     }
 }
 
-impl<I> Device<I> where I: Borrow<Vulkan> {
-    pub fn new(
-        instance: I,
-        physical_device_index: usize,
-        queue_info_and_priority: &[(&QueueInfo, &[f32])],
-    ) -> Self {
-        let queue_infos = queue_info_and_priority.iter()
-            .map(|(info, priorities)| {
-                vk::DeviceQueueCreateInfo::builder()
-                    .queue_family_index(info.family_index as u32)
-                    .queue_priorities(priorities)
-                    .build()
-            })
-            .collect::<Vec<_>>();
-
-        let extensions = Self::extensions();
-        let features = vk::PhysicalDeviceFeatures::default();
-        let device_info = vk::DeviceCreateInfo::builder()
-            .enabled_layer_names(&[])
-            .enabled_extension_names(&extensions[..])
-            .enabled_features(&features)
-            .queue_create_infos(&queue_infos);
-
-        let handle = unsafe {
-            instance.borrow().handle
-                .create_device(
-                    instance.borrow().physical_devices[physical_device_index].handle,
-                    &*device_info,
-                    None,
-                )
-                .unwrap()
-        };
-
-        Self { instance, physical_device_index, handle }
-    }
-
-    #[inline]
-    pub fn fp(&self) -> &Device { &self.handle }
-
-    fn extensions() -> Vec<*const i8> {
-        vec![khr::Swapchain::name().as_ptr() as _]
+impl Drop for SurfaceKHR {
+    fn drop(&mut self) {
+        unsafe { self.loader.destroy_surface(self.handle, None); }
     }
 }
 
-impl<I> Drop for Device<I> {
-    #[inline]
-    fn drop(&mut self) { unsafe { self.handle.destroy_device(None); } }
-}
-
-impl<I, D> Queue<I, D> where D: Borrow<Device<I>> {
-    pub fn from_device(device: D, info: &QueueInfo, index: usize) -> Self {
-        assert!((index as u32) < info.vk_info.queue_count, "Index is out of Queue count.");
-        let handle = unsafe {
-            device.borrow().handle.get_device_queue(info.family_index as u32, index as u32)
-        };
-
-        Queue {
-            _instance: PhantomData,
-            device,
-            handle,
-            family_index: info.family_index as u32,
-        }
-    }
-
-    pub unsafe fn submit(&mut self, infos: &[vk::SubmitInfo], fence: vk::Fence) {
-        self.device.borrow().handle.queue_submit(self.handle, infos, fence).unwrap();
-    }
-
-    pub unsafe fn wait_idle(&self) {
-        self.device.borrow().handle.device_wait_idle().unwrap()
-    }
-
-    #[inline]
-    pub fn handle(&self) -> vk::Queue { self.handle }
-    #[inline]
-    pub fn family_index(&self) -> u32 { self.family_index }
-}
 

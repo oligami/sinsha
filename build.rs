@@ -3,8 +3,8 @@ use std::path::Path;
 
 fn main() {
     let shaders = [
-        ["src/vulkan/render/dim3/gui.vert", "src/vulkan/render/dim3/vert.spv"],
-        ["src/vulkan/render/dim3/gui.frag", "src/vulkan/render/dim3/frag.spv"],
+        ["src/vulkan/render/dim3/glsl.vert", "src/vulkan/render/dim3/vert.spv"],
+        ["src/vulkan/render/dim3/glsl.frag", "src/vulkan/render/dim3/frag.spv"],
         ["src/vulkan/render/lighting/vert.vert", "src/vulkan/render/lighting/vert.spv"],
         ["src/vulkan/render/lighting/frag.frag", "src/vulkan/render/lighting/frag.spv"],
     ];

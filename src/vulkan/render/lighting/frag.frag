@@ -7,5 +7,5 @@ layout(set = 0, binding = 0, input_attachment_index = 2) uniform subpassInput CO
 
 void main() {
     // Do some lighting.
-    out_color = SubpassLoad(COLOR);
+    out_color = subpassLoad(COLOR);
 }

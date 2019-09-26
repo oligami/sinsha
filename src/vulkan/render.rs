@@ -603,8 +603,8 @@ impl<D: Borrow<device::Device>> VkRender<D> {
     unsafe fn pipelines(&mut self) {
         // G-Buffer rendering.
         unimplemented!("shader files must be updated.");
-        let vert = self.shader_module(&include_bytes!("dim3/vert.spv")[..]);
-        let frag = self.shader_module(&include_bytes!("dim3/frag.spv")[..]);
+        let vert = self.shader_module(&include_bytes!("render/dim3/vert.spv")[..]);
+        let frag = self.shader_module(&include_bytes!("render/dim3/frag.spv")[..]);
         let fn_name = CString::new("main").unwrap();
         let stages = [
             vk::PipelineShaderStageCreateInfo::builder()
