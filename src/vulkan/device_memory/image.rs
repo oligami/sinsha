@@ -38,7 +38,7 @@ pub struct ImageView<I, D, M, Im, A, E> where
 }
 
 impl<I, D, M, A, E> Image<I, D, M, A, E> where
-    I: Borrow<Instance>,
+    I: Borrow<Vulkan>,
     D: Borrow<Device<I>>,
     M: Borrow<DeviceMemory<I, D, A>>,
     A: Allocator,
@@ -160,7 +160,7 @@ impl<I, D, M, A, E> Drop for Image<I, D, M, A, E> where
 }
 
 impl<I, D, M, Im, A, E> ImageView<I, D, M, Im, A, E> where
-    I: Borrow<Instance>,
+    I: Borrow<Vulkan>,
     D: Borrow<Device<I>>,
     M: Borrow<DeviceMemory<I, D, A>>,
     Im: Borrow<Image<I, D, M, A, E>>,

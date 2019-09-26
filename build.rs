@@ -1,11 +1,12 @@
 use std::process::Command;
+use std::path::Path;
 
 fn main() {
     let shaders = [
-        ["shaders/gui/gui.vert", "shaders/gui/vert.spv"],
-        ["shaders/gui/gui.frag", "shaders/gui/frag.spv"],
-        ["shaders/test/vert.vert", "shaders/test/vert.spv"],
-        ["shaders/test/frag.frag", "shaders/test/frag.spv"],
+        ["src/vulkan/render/dim3/gui.vert", "src/vulkan/render/dim3/vert.spv"],
+        ["src/vulkan/render/dim3/gui.frag", "src/vulkan/render/dim3/frag.spv"],
+        ["src/vulkan/render/lighting/vert.vert", "src/vulkan/render/lighting/vert.spv"],
+        ["src/vulkan/render/lighting/frag.frag", "src/vulkan/render/lighting/frag.spv"],
     ];
 
     shaders.iter()

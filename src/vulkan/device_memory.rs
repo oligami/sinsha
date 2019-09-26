@@ -19,6 +19,22 @@ use std::sync::Mutex;
 use std::alloc::Layout;
 use std::ops::{ RangeBounds, Bound };
 
+pub struct VkAlloc;
+
+pub struct DataIdent;
+pub struct ImageIdent;
+
+impl VkAlloc {
+    pub fn alloc_data(&mut self, size: u64, usage: (), flags: ()) -> DataIdent {
+        unimplemented!()
+    }
+
+    pub fn alloc_image(&mut self, size: u64, usage: (), flags: ()) -> ImageIdent {
+        unimplemented!()
+    }
+}
+
+
 pub struct DeviceMemory<I, D, A> where D: Borrow<Device<I>> {
     _instance: PhantomData<I>,
     device: D,
@@ -44,7 +60,7 @@ pub enum MemoryErr {
 }
 
 
-impl<I, D, A> DeviceMemory<I, D, A> where I: Borrow<Instance>, D: Borrow<Device<I>>, A: Allocator {
+impl<I, D, A> DeviceMemory<I, D, A> where I: Borrow<Vulkan>, D: Borrow<Device<I>>, A: Allocator {
     pub fn with_allocator(
         device: D,
         allocator: A,
@@ -99,7 +115,7 @@ impl<I, D, A> Drop for DeviceMemory<I, D, A> where D: Borrow<Device<I>> {
 }
 
 impl<I, D, A, M> DeviceMemoryMapper<I, D, A, M> where
-    I: Borrow<Instance>,
+    I: Borrow<Vulkan>,
     D: Borrow<Device<I>>,
     M: Borrow<DeviceMemory<I, D, A>>,
 {

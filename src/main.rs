@@ -2,9 +2,11 @@ mod utility;
 mod linear_algebra;
 mod vulkan;
 mod window;
-//mod engine;
-mod objects;
-//mod gui;
+mod engine;
+mod graphics;
+mod player;
+mod field;
+mod gui;
 //mod interaction;
 
 //use engine::Engine;

@@ -1,26 +1,20 @@
-//! # About This Module
-//! This module is wrapper of Vulkan API.
+//! # Objects that need mutable reference
+//! ## vk::Queue
+//! Submitting commands.
 //!
-//! # Wrapping Policy
-//! This wrapper is not for safety. It's make only easy to use.
-//! Lifetime of all Vulkan API objects must be
+//! ## vk::SwapchainKHR
+//! Recreating. Require vk::SurfaceKHR to get new extent and also recreate framebuffers.
 //!
-//! TODO: Trait Borders are too strict. MUST BE CORRECTED.
-//! follow recommended three rules on STRUCT-BOUNDS below.
-//! https://sinkuu.github.io/api-guidelines/future-proofing.html#c-struct-bounds
+//! ## vk::DeviceMemory
+//! Allocating and Deallocating.
+//!
+//!
+//! ## vk::Buffer
+//! Allocating and Deallocating.
 
-pub mod utility;
 pub mod device_memory;
-//pub mod swapchain;
-//pub mod render_pass;
-//pub mod framebuffer;
-//pub mod descriptor;
-//pub mod pipeline;
 pub mod render;
 pub mod device;
-//pub mod vertex;
-//pub mod command;
-//pub mod sync;
 
 pub use device_memory::buffer;
 pub use device_memory::image;
@@ -33,8 +27,8 @@ use ash::extensions::khr;
 use ash::extensions::ext;
 use ash::vk_make_version;
 use ash::Entry;
-use ash::Instance as VkInstance;
-use ash::Device as VkDevice;
+use ash::Instance;
+use ash::Device;
 use ash::version::EntryV1_0;
 use ash::version::InstanceV1_0;
 use ash::version::DeviceV1_0;
@@ -46,131 +40,71 @@ use std::ffi::CString;
 use std::marker::PhantomData;
 use std::borrow::Borrow;
 
-pub struct Instance {
+#[cfg(debug_assertions)]
+pub struct Vulkan {
     entry: Entry,
-    handle: VkInstance,
-    physical_devices: Vec<PhysicalDevice>,
+    handle: Instance,
+    surface: SurfaceKHR,
+    physical_device: PhysicalDevice,
+    device: Device,
+    debug: DebugEXT,
 }
 
-pub struct PhysicalDevice {
+#[cfg(not(debug_assertions))]
+pub struct Vulkan {
+    entry: Entry,
+    handle: Instance,
+    surface: SurfaceKHR,
+    physical_device: PhysicalDevice,
+    device: Device,
+}
+
+struct SurfaceKHR {
+    window: Window,
+    loader: khr::Surface,
+    handle: vk::SurfaceKHR,
+}
+
+struct PhysicalDevice {
     handle: vk::PhysicalDevice,
     memory_types: Vec<vk::MemoryType>,
-    memory_heaps: Vec<vk::MemoryHeap>,
-    queue_families: Vec<vk::QueueFamilyProperties>,
 }
 
-pub struct DebugEXT<I> {
-    instance: I,
+struct DebugEXT {
     report_loader: ext::DebugReport,
     report: vk::DebugReportCallbackEXT,
     utils_loader: ext::DebugUtils,
     utils: vk::DebugUtilsMessengerEXT,
 }
 
-pub struct SurfaceKHR<I> {
-    instance: I,
-    loader: khr::Surface,
-    handle: vk::SurfaceKHR,
-    window: Window,
-}
-
-pub struct Device<I> {
-    instance: I,
-    physical_device_index: usize,
-    handle: VkDevice,
-}
-
-pub struct Queue<I, D> where D: Borrow<Device<I>> {
-    _instance: PhantomData<I>,
-    device: D,
+pub struct Queue<V> {
+    vulkan: V,
     handle: vk::Queue,
-    family_index: u32,
 }
 
-pub struct QueueInfo {
-    family_index: usize,
-    vk_info: vk::QueueFamilyProperties,
-}
-
-impl Instance {
+impl Vulkan {
     pub fn new() -> Self {
         let entry = Entry::new().unwrap();
-
-        let handle = {
-            let app_info = vk::ApplicationInfo {
-                s_type: StructureType::APPLICATION_INFO,
-                p_next: ptr::null(),
-                p_application_name: ptr::null(),
-                application_version: 0,
-                p_engine_name: ptr::null(),
-                engine_version: 0,
-                api_version: vk_make_version!(1, 1, 117),
-            };
-
-            let instance_extensions = Self::extensions();
-            let debug_layer = CString::new("VK_LAYER_LUNARG_standard_validation").unwrap();
-            let instance_layers = if cfg!(debug_assertions) {
-                vec![debug_layer.as_ptr()]
-            } else {
-                vec![]
-            };
-            let instance_info = vk::InstanceCreateInfo {
-                s_type: StructureType::INSTANCE_CREATE_INFO,
-                p_next: ptr::null(),
-                flags: vk::InstanceCreateFlags::empty(),
-                p_application_info: &app_info,
-                enabled_extension_count: instance_extensions.len() as u32,
-                pp_enabled_extension_names: instance_extensions.as_ptr(),
-                enabled_layer_count: instance_layers.len() as u32,
-                pp_enabled_layer_names: instance_layers.as_ptr(),
-            };
-
-            unsafe { entry.create_instance(&instance_info, None).unwrap() }
-        };
-
-        let physical_devices = {
-            unsafe { handle.enumerate_physical_devices().unwrap() }
-                .into_iter()
-                .map(|vk_physical_device| {
-                    let memory_properties = unsafe {
-                        handle.get_physical_device_memory_properties(vk_physical_device)
-                    };
-
-                    let property = unsafe {
-                        handle.get_physical_device_properties(vk_physical_device)
-                    };
-
-                    let memory_types = memory_properties
-                        .memory_types[..memory_properties.memory_type_count as usize]
-                        .to_vec();
-
-                    let memory_heaps = memory_properties
-                        .memory_heaps[..memory_properties.memory_heap_count as usize]
-                        .to_vec();
-
-                    let queue_families = unsafe {
-                        handle.get_physical_device_queue_family_properties(vk_physical_device)
-                    };
-
-                    PhysicalDevice {
-                        handle: vk_physical_device,
-                        memory_types,
-                        memory_heaps,
-                        queue_families,
-                    }
-                })
-                .collect()
-        };
+        let instance = Self::create_instance(&entry);
 
 
-        Self { entry, handle, physical_devices }
+
+
+        unimplemented!()
     }
 
-    #[inline]
-    pub fn physical_device_num(&self) -> usize { self.physical_devices.len() }
+    fn create_instance(entry: &Entry) -> Instance {
+        let app_info = vk::ApplicationInfo {
+            s_type: StructureType::APPLICATION_INFO,
+            p_next: ptr::null(),
+            p_application_name: ptr::null(),
+            application_version: 0,
+            p_engine_name: ptr::null(),
+            engine_version: 0,
+            api_version: vk_make_version!(1, 1, 117),
+        };
 
-    fn extensions() -> Vec<*const i8> {
-        if cfg!(debug_assertions) {
+        let instance_extensions = if cfg!(debug_assertions) {
             vec![
                 khr::Surface::name().as_ptr() as _,
                 khr::Win32Surface::name().as_ptr() as _,
@@ -182,17 +116,102 @@ impl Instance {
                 khr::Surface::name().as_ptr() as _,
                 khr::Win32Surface::name().as_ptr() as _,
             ]
-        }
+        };
+
+        let debug_layer = CString::new("VK_LAYER_LUNARG_standard_validation").unwrap();
+        let instance_layers = if cfg!(debug_assertions) {
+            vec![debug_layer.as_ptr()]
+        } else {
+            vec![]
+        };
+        let instance_info = vk::InstanceCreateInfo {
+            s_type: StructureType::INSTANCE_CREATE_INFO,
+            p_next: ptr::null(),
+            flags: vk::InstanceCreateFlags::empty(),
+            p_application_info: &app_info,
+            enabled_extension_count: instance_extensions.len() as u32,
+            pp_enabled_extension_names: instance_extensions.as_ptr(),
+            enabled_layer_count: instance_layers.len() as u32,
+            pp_enabled_layer_names: instance_layers.as_ptr(),
+        };
+
+        unsafe { entry.create_instance(&instance_info, None).unwrap() }
+    }
+
+    fn select_physical_device(instance: &Instance, surface: &SurfaceKHR) {
+        let vk_physical_devices = unsafe { instance.enumerate_physical_devices().unwrap() };
+        let (vk_physical_device, queue_family_index) = vk_physical_devices
+            .into_iter()
+            .find_map(|vk_physical_device| {
+                let property = unsafe {
+                    instance.get_physical_device_properties(vk_physical_device)
+                };
+
+                let queue_families = unsafe {
+                    instance.get_physical_device_queue_family_properties(vk_physical_device)
+                };
+
+                queue_families
+                    .iter()
+                    .enumerate()
+                    .find(|(queue_family_index, property)| {
+                        let surface_support = unsafe {
+                            surface.loader
+                                .get_physical_device_surface_support(
+                                    vk_physical_device,
+                                    *queue_family_index as u32,
+                                    surface.handle,
+                                )
+                        };
+
+                        let queue_flags_support = property.queue_flags
+                            .contains(flags);
+
+                        surface_support && queue_flags_support
+                    })
+                    .map(|(queue_family_index, _)| (vk_physical_device, queue_family_index as u32))
+            });
+
+        let memory_properties = unsafe {
+            instance.get_physical_device_memory_properties(vk_physical_device)
+        };
+
+        let memory_types = memory_properties
+            .memory_types[..memory_properties.memory_type_count as usize]
+            .to_vec();
+
+        let physical_device = PhysicalDevice {
+            handle: vk_physical_device,
+            memory_types,
+        };
+
+        let queue_priorities = [1.0_f32];
+        let queue_info = vk::DeviceQueueCreateInfo::builder()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&queue_priorities[..])
+            .build();
+
+        let device_info = vk::DeviceCreateInfo::builder()
+            .queue_create_infos(std::slice::from_ref(&queue_info))
+            .enabled_extension_names(unimplemented!())
+            .enabled_layer_names(unimplemented!())
+            .build();
+
+
+
+        unimplemented!()
     }
 }
 
-impl Drop for Instance {
-    fn drop(&mut self) { unsafe { self.handle.destroy_instance(None); } }
+impl Drop for Vulkan {
+    fn drop(&mut self) {
+        unsafe { self.instance.destroy_instance(None); }
+        unimplemented!()
+    }
 }
 
-impl<I> DebugEXT<I> where I: Borrow<Instance> {
-    pub fn new(instance: I) -> Self {
-        let instance_ref = instance.borrow();
+impl DebugEXT {
+    pub fn new(entry: &Entry, instance: &Instance) -> Self {
         let info = vk::DebugReportCallbackCreateInfoEXT::builder()
             .flags(
                 vk::DebugReportFlagsEXT::ERROR
@@ -201,7 +220,7 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> {
             )
             .pfn_callback(Some(Self::report_callback));
 
-        let report_loader = ext::DebugReport::new(&instance_ref.entry, &instance_ref.handle);
+        let report_loader = ext::DebugReport::new(entry, instance);
         let report = unsafe { report_loader.create_debug_report_callback(&info, None).unwrap() };
 
         let info = vk::DebugUtilsMessengerCreateInfoEXT::builder()
@@ -217,10 +236,10 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> {
             )
             .pfn_user_callback(Some(Self::utils_callback));
 
-        let utils_loader = ext::DebugUtils::new(&instance_ref.entry, &instance_ref.handle);
+        let utils_loader = ext::DebugUtils::new(entry, instance);
         let utils = unsafe { utils_loader.create_debug_utils_messenger(&info, None).unwrap() };
 
-        Self { instance, report_loader, report, utils_loader, utils }
+        Self { report_loader, report, utils_loader, utils }
     }
 
     unsafe extern "system" fn report_callback(
@@ -244,7 +263,7 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> {
             _ => "Unknown",
         };
 
-//        eprintln!("{}: {}\n {}", header, flags, message);
+        // eprintln!("{}: {}\n {}", header, flags, message);
 
         vk::FALSE
     }
@@ -280,7 +299,7 @@ impl<I> DebugEXT<I> where I: Borrow<Instance> {
     }
 }
 
-impl<I> Drop for DebugEXT<I> {
+impl Drop for DebugEXT {
     fn drop(&mut self) {
         unsafe {
             self.report_loader.destroy_debug_report_callback(self.report, None);
@@ -289,22 +308,20 @@ impl<I> Drop for DebugEXT<I> {
     }
 }
 
-impl<I> SurfaceKHR<I> where I: Borrow<Instance> {
-    pub fn new(instance: I, window: Window) -> Self {
-        let (loader, handle) = {
-            let instance = instance.borrow();
-            let loader = khr::Surface::new(&instance.entry, &instance.handle);
-            let handle = unsafe { Self::handle(&instance.entry, &instance.handle, &window) };
-            (loader, handle)
-        };
-
-        Self { instance, loader, handle, window }
+impl SurfaceKHR {
+    fn new(entry: &Entry, instance: &Instance, window: Window) -> Self {
+        SurfaceKHR {
+            window,
+            loader: khr::Surface::new(entry, instance),
+            handle: unsafe { Self::handle(entry, instance, &window) },
+        }
     }
+
 
     #[cfg(target_os = "windows")]
     unsafe fn handle(
         entry: &Entry,
-        instance: &VkInstance,
+        instance: &Instance,
         window: &Window
     ) -> vk::SurfaceKHR {
         use winapi::um::libloaderapi::GetModuleHandleW;
@@ -320,11 +337,7 @@ impl<I> SurfaceKHR<I> where I: Borrow<Instance> {
     }
 }
 
-impl<I> Drop for SurfaceKHR<I> {
-    fn drop(&mut self) { unsafe { self.loader.destroy_surface(self.handle, None); } }
-}
-
-impl<I> Device<I> where I: Borrow<Instance> {
+impl<I> Device<I> where I: Borrow<Vulkan> {
     pub fn new(
         instance: I,
         physical_device_index: usize,
@@ -361,7 +374,7 @@ impl<I> Device<I> where I: Borrow<Instance> {
     }
 
     #[inline]
-    pub fn fp(&self) -> &VkDevice { &self.handle }
+    pub fn fp(&self) -> &Device { &self.handle }
 
     fn extensions() -> Vec<*const i8> {
         vec![khr::Swapchain::name().as_ptr() as _]
@@ -402,35 +415,3 @@ impl<I, D> Queue<I, D> where D: Borrow<Device<I>> {
     pub fn family_index(&self) -> u32 { self.family_index }
 }
 
-impl<'d> Queue<(), &'d Device<()>> {
-    pub fn get_queue_info_with_surface_support<I>(
-        instance: &Instance,
-        physical_device_index: usize,
-        surface: &SurfaceKHR<I>,
-        flags: vk::QueueFlags,
-    ) -> Option<QueueInfo> where I: Borrow<Instance> {
-        let physical_device = &instance.physical_devices[physical_device_index];
-
-        physical_device.queue_families
-            .iter()
-            .enumerate()
-            .find(|(queue_family_index, property)| {
-                let surface_support = unsafe {
-                    surface.loader
-                        .get_physical_device_surface_support(
-                            physical_device.handle,
-                            *queue_family_index as u32,
-                            surface.handle,
-                        )
-                };
-
-                let queue_flags_support = property.queue_flags
-                    .contains(flags);
-
-                surface_support && queue_flags_support
-            })
-            .map(|(valid_queue_family_index, info)| {
-                QueueInfo { vk_info: *info, family_index: valid_queue_family_index }
-            })
-    }
-}

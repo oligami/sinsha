@@ -2,15 +2,21 @@ use crate::linear_algebra::*;
 
 use std::default::Default;
 
-pub struct Object {
-    vertex: Vertex,
-    index: u32,
-    pipeline: Pipeline,
-    descriptor_set: (),
-    push_constant: (),
+
+pub trait DrawCommand {
+    fn draw(&self, command: &mut ());
 }
 
-pub enum Pipeline {}
+pub struct Graphics {
+    vertices: Vec<f32>,
+    texture: Vec<u8>,
+}
+
+impl DrawCommand for Graphics {
+    fn draw(&self, command: &mut ()) {
+        unimplemented!()
+    }
+}
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct Vertex {

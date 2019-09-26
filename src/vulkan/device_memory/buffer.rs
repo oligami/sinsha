@@ -46,7 +46,7 @@ pub enum DataErr {
 }
 
 impl<I, D, M, BA, DA> Buffer<I, D, M, BA, DA> where
-    I: Borrow<Instance>,
+    I: Borrow<Vulkan>,
     D: Borrow<Device<I>>,
     M: Borrow<DeviceMemory<I, D, BA>>,
     BA: Allocator,
@@ -144,7 +144,7 @@ impl From<alloc::AllocErr> for BufferErr {
 
 
 impl<I, D, M, B, BA, DA> Data<I, D, M, B, BA, DA, ()> where
-    I: Borrow<Instance>,
+    I: Borrow<Vulkan>,
     D: Borrow<Device<I>>,
     M: Borrow<DeviceMemory<I, D, BA>>,
     B: Borrow<Buffer<I, D, M, BA, DA>>,
