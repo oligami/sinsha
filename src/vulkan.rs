@@ -12,9 +12,8 @@
 //! ## vk::Buffer
 //! Allocating and Deallocating.
 
-//pub mod device_memory;
 mod memory;
-//pub mod render;
+pub mod render;
 
 use ash::vk;
 use ash::vk_make_version;
@@ -68,12 +67,6 @@ impl Vulkan {
         let (physical_device, device) = Self::create_device(&instance, &surface);
 
         Self { entry, instance, surface, physical_device, device, debug }
-    }
-
-    pub fn get_queue(&self) -> Queue {
-        let handle = unsafe {
-            self.device.get_device_queue()
-        }
     }
 
     fn create_instance(entry: &Entry) -> Instance {
@@ -202,11 +195,12 @@ impl Drop for Vulkan {
         unsafe {
             unsafe { ManuallyDrop::drop(&mut self.surface); }
             // debug is only enabled in debug mode, not in release mode.
-            if cfg!(debug_assertions) { unsafe { ManuallyDrop::drop(&mut self.debug); } }
+            if cfg!(debug_assertions) {
+                unsafe { ManuallyDrop::drop(&mut self.debug); }
+            }
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
-        unimplemented!()
     }
 }
 

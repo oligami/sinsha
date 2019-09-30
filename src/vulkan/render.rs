@@ -1,11 +1,18 @@
-use super::*;
+use ash::vk;
+use ash::extensions::khr;
+use ash::{ Instance, Device };
+use ash::version::DeviceV1_0;
+use winit::window::Window;
 
+use super::{ Vulkan, PhysicalDevice };
+
+use std::borrow::Borrow;
 use std::ops::Index;
 use std::path::Path;
+use std::ffi::CString;
 
-pub struct VkRender<D: Borrow<device::Device>> {
-    device: D,
-    surface: SurfaceKHR,
+pub struct VkRender<V: Borrow<Vulkan>> {
+    vulkan: V,
     swapchain: SwapchainKHR,
     render_pass: vk::RenderPass,
     framebuffers: Framebuffers,
@@ -39,10 +46,10 @@ pub struct PipelineLayout(usize);
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct Pipeline(usize);
 
-impl<D: Borrow<device::Device>> VkRender<D> {
-    pub fn new(device: D) -> Self {
+impl<V: Borrow<Vulkan>> VkRender<V> {
+    pub fn new(vulkan: V) -> Self {
         let surface = unsafe { Self::create_surface(device.borrow(), unimplemented!()) };
-        let swapchain = unsafe { Self::create_swapchain(device.borrow(), &surface) };
+        let swapchain = unsafe { Self::create_swapchain(vulkan.borrow()) };
         let render_pass = Self::create_render_pass(&device.borrow().device);
         let framebuffers = Self::create_framebuffers(
             &device.borrow().device,
@@ -55,24 +62,15 @@ impl<D: Borrow<device::Device>> VkRender<D> {
     }
 
     /// # Safety
-    /// Ensure the device has surface extension.
-    unsafe fn create_surface(device: &device::Device, window: Window) -> SurfaceKHR {
-        let loader = khr::Surface::new(&device.entry, &device.instance);
-        let handle = unsafe { SurfaceKHR::handle(&device.entry, &device.instance, &window) };
-
-        SurfaceKHR { window, loader, handle }
-    }
-
-    /// # Safety
     /// Ensure the device has swapchain extension.
-    unsafe fn create_swapchain(device: &device::Device, surface: &SurfaceKHR) -> SwapchainKHR {
-        let loader = khr::Swapchain::new(&device.instance, &device.device);
+    unsafe fn create_swapchain(vulkan: &Vulkan) -> SwapchainKHR {
+        let loader = khr::Swapchain::new(&vulkan.instance, &vulkan.device);
 
         // evaluate minimum image count.
         let capabilities = surface.loader
             .get_physical_device_surface_capabilities(
-                device.physical_device.handle,
-                surface.handle,
+                vulkan.physical_device.handle,
+                vulkan.surface.handle,
             )
             .unwrap();
         let min_image_count = if capabilities.min_image_count == capabilities.max_image_count {
@@ -318,7 +316,7 @@ impl<D: Borrow<device::Device>> VkRender<D> {
     }
 
     fn create_framebuffers(
-        device: &VkDevice,
+        device: &Device,
         physical_device: &PhysicalDevice,
         swapchain: &SwapchainKHR,
         render_pass: vk::RenderPass,
