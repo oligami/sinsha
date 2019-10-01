@@ -193,11 +193,9 @@ impl Vulkan {
 impl Drop for Vulkan {
     fn drop(&mut self) {
         unsafe {
-            unsafe { ManuallyDrop::drop(&mut self.surface); }
+            ManuallyDrop::drop(&mut self.surface);
             // debug is only enabled in debug mode, not in release mode.
-            if cfg!(debug_assertions) {
-                unsafe { ManuallyDrop::drop(&mut self.debug); }
-            }
+            if cfg!(debug_assertions) { ManuallyDrop::drop(&mut self.debug); }
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
         }
