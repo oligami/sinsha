@@ -58,7 +58,12 @@ impl<V: Borrow<Vulkan>> VkRender<V> {
             render_pass,
         );
 
-        unimplemented!()
+        Self {
+            vulkan,
+            swapchain,
+            render_pass,
+            framebuffers,
+        }
     }
 
     /// # Safety
@@ -783,8 +788,47 @@ impl<V: Borrow<Vulkan>> VkRender<V> {
     }
 }
 
+<<<<<<< HEAD
 impl<D: Borrow<Device>> Drop for VkRender<D> {
+=======
+impl<V: Borrow<Vulkan>> Drop for VkRender<V> {
+>>>>>>> b26fbb8769f277c4560fd580a3ffa77d97acd2c0
     fn drop(&mut self) {
+        let device = &self.vulkan.borrow().device;
+        unsafe {
+            // destroy shader objects
+            self.pipelines
+                .iter()
+                .for_each(|pipeline| device.destroy_pipeline(*pipeline, None));
+            self.pipeline_layouts
+                .iter()
+                .for_each(|layout| device.destroy_pipeline_layout(*layout, None));
+            self.descriptor_layouts
+                .iter()
+                .for_each(|layout| device.destroy_descriptor_set_layout(*layout, None));
+
+            // destroy Framebuffers
+            self.framebuffers.handles
+                .iter()
+                .for_each(|handle| device.destroy_framebuffer(*handle, None));
+            self.framebuffers.views
+                .iter()
+                .for_each(|views| {
+                    views.iter().for_each(|view| device.destroy_image_view(*view, None));
+                });
+            self.framebuffers.images
+                .iter()
+                .for_each(|images| {
+                    images.iter().for_each(|image| device.destroy_image(*image, None));
+                });
+            device.free_memory(self.framebuffers.memory, None);
+
+            // destroy RenderPass
+            device.destroy_render_pass(self.render_pass, None);
+
+            // destroy SwapchainKHR
+            self.swapchain.loader.destroy_swapchain(self.swapchain.handle, None);
+        }
         unimplemented!()
     }
 }
@@ -803,19 +847,31 @@ impl Pipeline {
     pub const G_BUFFER: Self = Pipeline(1);
 }
 
+<<<<<<< HEAD
 impl<D: Borrow<Device>> Index<DescriptorSetLayout> for VkRender<D> {
+=======
+impl<V: Borrow<Vulkan>> Index<DescriptorSetLayout> for VkRender<V> {
+>>>>>>> b26fbb8769f277c4560fd580a3ffa77d97acd2c0
     type Output = vk::DescriptorSetLayout;
     fn index(&self, DescriptorSetLayout(index): DescriptorSetLayout) -> &Self::Output {
         &self.descriptor_layouts[index]
     }
 }
+<<<<<<< HEAD
 impl<D: Borrow<Device>> Index<PipelineLayout> for VkRender<D> {
+=======
+impl<V: Borrow<Vulkan>> Index<PipelineLayout> for VkRender<V> {
+>>>>>>> b26fbb8769f277c4560fd580a3ffa77d97acd2c0
     type Output = vk::PipelineLayout;
     fn index(&self, PipelineLayout(index): PipelineLayout) -> &Self::Output {
         &self.pipeline_layouts[index]
     }
 }
+<<<<<<< HEAD
 impl<D: Borrow<Device>> Index<Pipeline> for VkRender<D> {
+=======
+impl<V: Borrow<Vulkan>> Index<Pipeline> for VkRender<V> {
+>>>>>>> b26fbb8769f277c4560fd580a3ffa77d97acd2c0
     type Output = vk::Pipeline;
     fn index(&self, Pipeline(index): Pipeline) -> &Self::Output {
         &self.pipelines[index]
