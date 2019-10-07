@@ -10,3 +10,4 @@ ash = "0.29"
 image_crate = { package = "image", version = "0.21" }
 winit = "0.20.0-alpha2"
 winapi = "0.3"
+glfw = "0.32.0"

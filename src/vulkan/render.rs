@@ -48,12 +48,12 @@ pub struct Pipeline(usize);
 
 impl<V: Borrow<Vulkan>> VkRender<V> {
     pub fn new(vulkan: V) -> Self {
-        let surface = unsafe { Self::create_surface(device.borrow(), unimplemented!()) };
+        let surface = unimplemented!();
         let swapchain = unsafe { Self::create_swapchain(vulkan.borrow()) };
-        let render_pass = Self::create_render_pass(&device.borrow().device);
+        let render_pass = Self::create_render_pass(&vulkan.borrow().device);
         let framebuffers = Self::create_framebuffers(
-            &device.borrow().device,
-            &device.borrow().physical_device,
+            &vulkan.borrow().device,
+            &vulkan.borrow().physical_device,
             &swapchain,
             render_pass,
         );
@@ -67,7 +67,7 @@ impl<V: Borrow<Vulkan>> VkRender<V> {
         let loader = khr::Swapchain::new(&vulkan.instance, &vulkan.device);
 
         // evaluate minimum image count.
-        let capabilities = surface.loader
+        let capabilities = loader
             .get_physical_device_surface_capabilities(
                 vulkan.physical_device.handle,
                 vulkan.surface.handle,
@@ -783,7 +783,7 @@ impl<V: Borrow<Vulkan>> VkRender<V> {
     }
 }
 
-impl<D: Borrow<device::Device>> Drop for VkRender<D> {
+impl<D: Borrow<Device>> Drop for VkRender<D> {
     fn drop(&mut self) {
         unimplemented!()
     }
@@ -803,19 +803,19 @@ impl Pipeline {
     pub const G_BUFFER: Self = Pipeline(1);
 }
 
-impl<D: Borrow<device::Device>> Index<DescriptorSetLayout> for VkRender<D> {
+impl<D: Borrow<Device>> Index<DescriptorSetLayout> for VkRender<D> {
     type Output = vk::DescriptorSetLayout;
     fn index(&self, DescriptorSetLayout(index): DescriptorSetLayout) -> &Self::Output {
         &self.descriptor_layouts[index]
     }
 }
-impl<D: Borrow<device::Device>> Index<PipelineLayout> for VkRender<D> {
+impl<D: Borrow<Device>> Index<PipelineLayout> for VkRender<D> {
     type Output = vk::PipelineLayout;
     fn index(&self, PipelineLayout(index): PipelineLayout) -> &Self::Output {
         &self.pipeline_layouts[index]
     }
 }
-impl<D: Borrow<device::Device>> Index<Pipeline> for VkRender<D> {
+impl<D: Borrow<Device>> Index<Pipeline> for VkRender<D> {
     type Output = vk::Pipeline;
     fn index(&self, Pipeline(index): Pipeline) -> &Self::Output {
         &self.pipelines[index]

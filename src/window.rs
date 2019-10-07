@@ -5,6 +5,9 @@ use winit::dpi::LogicalSize;
 
 pub enum CustomEvent {}
 
+pub fn window() {
+}
+
 pub fn event_loop() -> EventLoop<CustomEvent> {
     EventLoop::new_user_event()
 }
