@@ -1,19 +1,19 @@
-use winit::event::*;
-use winit::event_loop::ControlFlow;
+use winit::*;
 
 use crate::vulkan::Vulkan;
 
 pub fn run() {
-    let mut event_loop = crate::window::event_loop();
-    let window = crate::window::create_window(&event_loop);
-    let vulkan = Vulkan::new(window);
+    let (mut window, mut events_loop) = crate::window::create_window();
 
-    event_loop.run(|event, _, ctrl_flow| {
+    let mut loop_end = false;
+
+    let event_handler = |event| {
         match event {
-            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-                *ctrl_flow = ControlFlow::Exit;
-            }
-            _ => (),
-        }
-    });
+            Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => loop_end = true,
+            _ => ()
+        };
+    };
+    while !loop_end {
+        events_loop.poll_events(event_handler);
+    }
 }

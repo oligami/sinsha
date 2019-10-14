@@ -22,7 +22,7 @@ use ash::extensions::{ khr, ext };
 use ash::{ Entry, Instance, Device };
 use ash::version::{ EntryV1_0, InstanceV1_0, DeviceV1_0 };
 
-use winit::window::Window;
+use winit::Window;
 
 use std::ptr;
 use std::sync::Once;
@@ -56,6 +56,7 @@ struct DebugEXT {
     utils: vk::DebugUtilsMessengerEXT,
 }
 
+// TODO: Decide Queue implementings.
 pub struct Queue(vk::Queue);
 
 impl Vulkan {
@@ -323,10 +324,10 @@ impl SurfaceKHR {
         window: &Window
     ) -> vk::SurfaceKHR {
         use winapi::um::libloaderapi::GetModuleHandleW;
-        use winit::platform::windows::WindowExtWindows;
+        use winit::os::windows::WindowExt;
 
         let info = vk::Win32SurfaceCreateInfoKHR::builder()
-            .hwnd(window.hwnd())
+            .hwnd(window.get_hwnd())
             .hinstance(GetModuleHandleW(ptr::null()) as _);
 
         khr::Win32Surface::new(entry, instance)

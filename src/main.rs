@@ -1,14 +1,14 @@
-mod utility;
+//mod utility;
 mod linear_algebra;
-//mod vulkan;
+mod vulkan;
 mod window;
-//mod engine;
-mod graphics;
-mod player;
-mod field;
+mod engine;
+//mod graphics;
+//mod player;
+//mod field;
 mod gui;
-//mod interaction;
+mod input;
 
 fn main() {
-	unimplemented!();
+    engine::run();
 }

@@ -2,7 +2,7 @@ use std::default::Default;
 use std::ops::{ Neg, Add, Sub, Mul, Div };
 
 #[repr(C)]
-#[derive(Copy, Clone, Debug, Default)]
+#[derive(Copy, Clone, Debug, Default, Ord, PartialOrd, Eq, PartialEq)]
 pub struct XY<T> {
     pub x: T,
     pub y: T,
@@ -32,6 +32,11 @@ pub struct Camera {
     dir: XYZ<f32>,
 }
 
+impl<T> XY<T> {
+    pub fn new(x: T, y: T) -> Self {
+        Self { x, y }
+    }
+}
 
 impl<T> XYZ<T> {
     pub fn new(x: T, y: T, z: T) -> Self {
