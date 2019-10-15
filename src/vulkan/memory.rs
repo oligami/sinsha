@@ -1,11 +1,11 @@
+mod allocator;
+
 use super::*;
 
 use std::borrow::Borrow;
 use std::ops::BitAnd;
 
-/// TODO: delete borrow of Vulkan.
-pub struct DeviceMemory<V: Borrow<V>> {
-    vulkan: V,
+pub struct DeviceMemory {
     handle: vk::DeviceMemory,
     size: u64,
     memory_type: usize,
@@ -20,10 +20,7 @@ pub struct DeviceMemoryBuilder {
 #[derive(Copy, Clone, Debug)]
 pub struct MemoryTypeBits(u32);
 
-
-/// TODO: delete borrow of Vulkan.
-pub struct Buffer<V: Borrow<Vulkan>> {
-    vulkan: V,
+pub struct Buffer {
     handle: vk::Buffer,
     size: u64,
     align: u64,
@@ -37,20 +34,35 @@ pub struct BufferBuilder {
     usage: vk::BufferUsageFlags,
 }
 
-pub struct Image<V: Borrow<Vulkan>> {
-    vulkan: V,
+pub struct Image {
     handle: vk::Image,
     extent: vk::Extent3D,
     usage: vk::ImageUsageFlags,
 }
 
-impl<V: Borrow<Vulkan>> DeviceMemory<V> {
+impl DeviceMemory {
     pub fn builder() -> DeviceMemoryBuilder {
         DeviceMemoryBuilder {
             size: 0x1000,
-            memory_type_bits: MemoryTypeBits(1),
+            memory_type_bits: MemoryTypeBits(!0),
             memory_properties: vk::MemoryPropertyFlags::empty(),
         }
+    }
+
+    // Caller must take care about size and alignment of the buffer.
+    pub unsafe fn bind_buffer(
+        &self, buffer_builder: &BufferBuilder, offset: u64, vulkan: &Vulkan
+    ) -> Buffer {
+        let mut buffer = buffer_builder.build_unbound(vulkan);
+        buffer.offset = offset;
+
+        vulkan.device.bind_buffer_memory(buffer.handle, self.handle, offset).unwrap();
+
+        buffer
+    }
+
+    pub unsafe fn free(self, vulkan: &Vulkan) {
+        vulkan.device.free_memory(self.handle, None);
     }
 }
 
@@ -61,7 +73,7 @@ impl DeviceMemoryBuilder {
     }
 
     pub fn memory_type_bits(&mut self, memory_type_bits: MemoryTypeBits) -> &mut Self {
-        self.memory_type = memory_type_bits;
+        self.memory_type.0 = self.memory_type_bits.0 & memory_type_bits.0;
         self
     }
 
@@ -70,11 +82,14 @@ impl DeviceMemoryBuilder {
         self
     }
 
-    pub fn build<V: Borrow<Vulkan>>(&self, vulkan: V) -> Result<DeviceMemory<V>, u32> {
-        let vulkan_ref = vulkan.borrow();
-
+    pub fn build(&self, vulkan: &Vulkan) -> Result<DeviceMemory, u32> {
         // Search compatible memory type index.
-        let memory_type_index = vulkan_ref.physical_device.memory_types
+        let memory_properties = unsafe {
+            vulkan.instance.get_physical_device_memory_properties(vulkan.physical_device)
+        };
+
+        let memory_type_index = memory_properties
+            .memory_types[0..memory_properties.memory_type_count as usize]
             .iter()
             .enumerate()
             .position(|(i, memory_type)| {
@@ -93,21 +108,21 @@ impl DeviceMemoryBuilder {
             .memory_type_index(memory_type_index)
             .build();
 
-        let handle = unsafe { vulkan_ref.device.allocate_memory(&info, None).unwrap() };
+        let handle = unsafe { vulkan.device.allocate_memory(&info, None).unwrap() };
 
-        DeviceMemory {
-            vulkan,
-            handle,
-            size: self.size,
-            memory_type: self.memory_type as usize,
-        }
+        Ok(
+            DeviceMemory {
+                handle,
+                size: self.size,
+                memory_type: memory_type_index as usize,
+            }
+        )
     }
 }
 
-impl BitAnd for MemoryTypeBits {
-    type Output = Self;
-    fn bitand(self, rhs: MemoryTypeBits) -> Self::Output {
-        MemoryTypeBits(self.0 & rhs.0)
+impl Buffer {
+    pub unsafe fn destroy(self, vulkan: &Vulkan) {
+        vulkan.device.destroy_buffer(self.handle, None);
     }
 }
 
@@ -126,8 +141,8 @@ impl BufferBuilder {
         MemoryTypeBits(requirements.memory_type_bits)
     }
 
-    pub fn build<V: Borrow<Vulkan>>(&self, vulkan: V) -> Buffer<V> {
-        let device_ref = &vulkan.borrow().device;
+    pub unsafe fn build_unbound(&self, vulkan: &Vulkan) -> Buffer {
+        let device = &vulkan.device;
 
         let info = vk::BufferCreateInfo::builder()
             .size(self.size)
@@ -136,16 +151,15 @@ impl BufferBuilder {
             .queue_family_indices(unimplemented!())
             .build();
 
-        let handle = unsafe { device_ref.create_buffer(&info, None).unwrap() };
+        let handle = unsafe { device.create_buffer(&info, None).unwrap() };
 
-        let requirements = unsafe { device_ref.get_buffer_memory_requirements(handle) };
+        let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
 
         Buffer {
-            vulkan,
             handle,
             size: requirements.size,
             align: requirements.alignment,
-            offset: unimplemented!(),
+            offset: !0,
             usage: self.usage,
             compatible_memory_type_bits: MemoryTypeBits(requirements.memory_type_bits),
         }

@@ -1,17 +1,3 @@
-//! # Objects that need mutable reference
-//! ## vk::Queue
-//! Submitting commands.
-//!
-//! ## vk::SwapchainKHR
-//! Recreating. Require vk::SurfaceKHR to get new extent and also recreate framebuffers.
-//!
-//! ## vk::DeviceMemory
-//! Allocating and Deallocating.
-//!
-//!
-//! ## vk::Buffer
-//! Allocating and Deallocating.
-
 mod memory;
 pub mod render;
 
@@ -33,7 +19,7 @@ pub struct Vulkan {
     entry: Entry,
     instance: Instance,
     surface: ManuallyDrop<SurfaceKHR>,
-    physical_device: PhysicalDevice,
+    physical_device: vk::PhysicalDevice,
     device: Device,
     debug: ManuallyDrop<DebugEXT>,
 }
@@ -42,11 +28,6 @@ struct SurfaceKHR {
     window: Window,
     loader: khr::Surface,
     handle: vk::SurfaceKHR,
-}
-
-struct PhysicalDevice {
-    handle: vk::PhysicalDevice,
-    memory_types: Vec<vk::MemoryType>,
 }
 
 struct DebugEXT {
@@ -115,9 +96,9 @@ impl Vulkan {
         unsafe { entry.create_instance(&instance_info, None).unwrap() }
     }
 
-    fn create_device(instance: &Instance, surface: &SurfaceKHR) -> (PhysicalDevice, Device) {
+    fn create_device(instance: &Instance, surface: &SurfaceKHR) -> (vk::PhysicalDevice, Device) {
         let vk_physical_devices = unsafe { instance.enumerate_physical_devices().unwrap() };
-        let (vk_physical_device, queue_family_index) = vk_physical_devices
+        let (physical_device, queue_family_index) = vk_physical_devices
             .into_iter()
             .find_map(|vk_physical_device| {
                 let property = unsafe {
@@ -150,19 +131,6 @@ impl Vulkan {
             })
             .unwrap();
 
-        let memory_properties = unsafe {
-            instance.get_physical_device_memory_properties(vk_physical_device)
-        };
-
-        let memory_types = memory_properties
-            .memory_types[..memory_properties.memory_type_count as usize]
-            .to_vec();
-
-        let physical_device = PhysicalDevice {
-            handle: vk_physical_device,
-            memory_types,
-        };
-
         let queue_priorities = [1.0_f32];
         let queue_info = vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(queue_family_index)
@@ -183,7 +151,7 @@ impl Vulkan {
 
         let device = unsafe {
             instance
-                .create_device(vk_physical_device, &device_info, None)
+                .create_device(physical_device, &device_info, None)
                 .unwrap()
         };
 
