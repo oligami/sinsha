@@ -1,24 +1,14 @@
+use ash::vk;
+
+use crate::vulkan::Vulkan;
+
 use std::ops::Range;
 
-pub struct Texture;
+pub struct StartMenu {}
 
+impl StartMenu {
+    pub fn commands(&self, command_pool: vk::CommandPool, vulkan: &Vulkan) -> vk::CommandBuffer {
 
-pub struct Button {
-    hit_box: HitBox,
-    texture_index: usize,
-}
-
-pub struct HitBox {
-    range_of_x: Range<f32>,
-    range_of_y: Range<f32>,
-}
-
-impl Button {
-    pub fn builder() {}
-
-    pub fn hit_and_then<F: FnMut()>(input: (), mut behavior: F) {
-        let hit = unimplemented!();
-        if hit { behavior() }
     }
 }
 
