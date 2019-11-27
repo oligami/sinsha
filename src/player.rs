@@ -1,11 +1,14 @@
+use crate::vulkan::memory::Data;
+
 use std::time::Duration;
 
 
-pub struct Player {
+pub struct Player<Dv, Du> where Dv: Data<[u32]>, Du: Data<Color> {
     name: String,
     class: Class,
     statics: Statics,
-    // graphics
+    vertices: Dv,
+    uniform: Du,
 }
 
 pub struct Class {

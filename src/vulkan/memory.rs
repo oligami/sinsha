@@ -1,65 +1,155 @@
 mod allocator;
 
 use super::*;
+use allocator::{ Allocator, AllocErr };
 
 use std::borrow::Borrow;
 use std::ops::BitAnd;
+use std::ops::Range;
+use std::alloc::Layout;
+use std::marker::PhantomData;
 
-pub struct DeviceMemory {
-    handle: vk::DeviceMemory,
-    size: u64,
-    memory_type: usize,
+pub enum MemAllocErr {
+    NoValidMemoryType,
+}
+pub enum BufAllocErr {
+    VkErr(vk::Result),
+    InnerAllocatorErr(AllocErr),
+    IncompatibleMemoryType,
+}
+pub enum ImageAllocErr {}
+pub enum DataAllocErr {}
+
+pub trait DeviceMemory {
+    type Allocator: Allocator;
+    fn handle(&self) -> vk::DeviceMemory;
+    fn capacity(&self) -> u64;
+    fn alloc_buffer<B: Buffer, A: Allocator>(
+        &self, info: &vk::BufferCreateInfo, flags: <Self::Allocator as Allocator>::Flags, allocator: A,
+    ) -> Result<B, BufAllocErr>;
+    fn alloc_image<I: Image>(&self, info: ()) -> Result<I, ImageAllocErr>;
 }
 
-pub struct DeviceMemoryBuilder {
-    size: u64,
-    memory_type_bits: MemoryTypeBits,
+pub trait Buffer {
+    // これいらないかも
+    fn handle(&self) -> vk::Buffer;
+    fn offset(&self) -> u64;
+    fn capacity(&self) -> u64;
+    fn alloc_data<T, D: Data<T>>(&self, info: ()) -> Result<D, DataAllocErr>;
+}
+
+// D: Data<T> とか impl Data<T> などの楽な記述ができるよう、trait にした。
+pub trait Data<T> where T: ?Sized {
+    fn buffer_handle(&self) -> vk::Buffer;
+    fn offset(&self) -> u64;
+    fn size(&self) -> u64;
+    fn len(&self) -> u64;
+}
+
+pub struct DevMem<V: Borrow<Vulkan>, A> {
+    vulkan: V,
+    allocator: A,
+    handle: vk::DeviceMemory,
+    capacity: u64,
+    memory_type_bits: u32,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+}
+
+pub struct DevMemBuilder {
+    memory_type_bits: u32,
     memory_properties: vk::MemoryPropertyFlags,
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct MemoryTypeBits(u32);
-
-pub struct Buffer {
+pub struct Buf<V, M, Aed, Aor> where
+    V: Borrow<Vulkan>,
+    M: Borrow<DevMem<V, Aed>>,
+    Aed: Allocator,
+{
+    vulkan: PhantomData<V>,
+    memory: M,
+    allocated: PhantomData<Aed>,
     handle: vk::Buffer,
-    requirements: vk::MemoryRequirements,
+    offset: u64,
+    capacity: u64,
+    layout: Layout,
     usage: vk::BufferUsageFlags,
-    compatible_memory_type_bits: MemoryTypeBits,
+    allocator: Aor,
 }
 
-pub struct BufferBuilder {
-    size: u64,
-    usage: vk::BufferUsageFlags,
+// TODO: mip level と array layer とかも必要？他には？
+pub trait Image {
+    fn handle(&self) -> vk::Image;
+    // TODO: 返り値は Option の方がいいかも。あと、複数返せないと Depth と Stencil がうまく使えない。
+    fn view(&self) -> vk::ImageView;
+    fn extent(&self) -> vk::Extent3D;
 }
 
-pub struct Image {
-    handle: vk::Image,
-    extent: vk::Extent3D,
-    usage: vk::ImageUsageFlags,
-}
-
-impl DeviceMemory {
-    pub fn builder() -> DeviceMemoryBuilder {
-        DeviceMemoryBuilder {
-            size: 0x1000,
-            memory_type_bits: MemoryTypeBits(!0),
+impl<V: Borrow<Vulkan>, A> DevMem<V, A> {
+    pub fn builder() -> DevMemBuilder {
+        DevMemBuilder {
+            memory_type_bits: !0,
             memory_properties: vk::MemoryPropertyFlags::empty(),
         }
     }
+}
 
-    pub unsafe fn free(self, vulkan: &Vulkan) {
-        vulkan.device.free_memory(self.handle, None);
+impl From<vk::Result> for BufAllocErr {
+    fn from(err: vk::Result) -> Self { BufAllocErr::VkErr(err) }
+}
+
+impl From<AllocErr> for BufAllocErr {
+    fn from(err: AllocErr) -> Self { BufAllocErr::InnerAllocatorErr(err) }
+}
+
+impl<V: Borrow<Vulkan>, Aed: Allocator> DeviceMemory for DevMem<V, Aed> {
+    type Allocator = Aed;
+    fn handle(&self) -> vk::DeviceMemory { self.handle }
+    fn capacity(&self) -> u64 { self.allocator.capacity() }
+
+    fn alloc_buffer<B: Buffer, Aor: Allocator>(
+        &self, info: &vk::BufferCreateInfo, flags: Aed::Flags, allocator: Aor,
+    ) -> Result<B, BufAllocErr> {
+        let ref_vulkan = self.vulkan.borrow();
+
+        let raw_buffer = unsafe { ref_vulkan.device.create_buffer(&info, None)? };
+        let requirements = unsafe { ref_vulkan.device.get_buffer_memory_requirements(raw_buffer) };
+
+        let memory_type_compatible = requirements.memory_type_bits & self.memory_type_bits != 0;
+        if !memory_type_compatible { return Err(BufAllocErr::IncompatibleMemoryType); }
+
+        let layout = Layout::from_size_align(info.size as usize,
+                                             requirements.alignment as usize).unwrap();
+        let offset = unsafe { self.allocator.alloc(layout, flags)? };
+
+        let buffer = Buf {
+            vulkan: PhantomData,
+            memory: self.clone(),
+            allocated: PhantomData,
+            handle: raw_buffer,
+            offset,
+            capacity: allocator.capacity(),
+            layout,
+            usage: info.usage,
+            allocator,
+        };
+
+        Ok(buffer)
+    }
+
+    fn alloc_image<I: Image>(&self, info: ()) -> Result<I, ImageAllocErr> {
+        unimplemented!()
     }
 }
 
-impl DeviceMemoryBuilder {
-    pub fn size(&mut self, size: u64) -> &mut Self {
-        self.size = size;
-        self
+impl<V: Borrow<Vulkan>, A> Drop for DevMem<V, A> {
+    fn drop(&mut self) {
+        unsafe { self.vulkan.borrow().device.free_memory(self.handle, None); }
     }
+}
 
-    pub fn memory_type_bits(&mut self, memory_type_bits: MemoryTypeBits) -> &mut Self {
-        self.memory_type.0 = self.memory_type_bits.0 & memory_type_bits.0;
+impl DevMemBuilder {
+    pub fn memory_type_bits(&mut self, memory_type_bits: u32) -> &mut Self {
+        self.memory_type_bits = self.memory_type_bits & memory_type_bits;
         self
     }
 
@@ -68,10 +158,13 @@ impl DeviceMemoryBuilder {
         self
     }
 
-    pub fn build(&self, vulkan: &Vulkan) -> Result<DeviceMemory, u32> {
+    pub fn build<V, A>(&self, vulkan: V, allocator: A) -> Result<DevMem<V, A>, MemAllocErr>
+        where V: Borrow<Vulkan>, A: Allocator,
+    {
+        let ref_vulkan = vulkan.borrow();
         // Search compatible memory type index.
         let memory_properties = unsafe {
-            vulkan.instance.get_physical_device_memory_properties(vulkan.physical_device)
+            ref_vulkan.instance.get_physical_device_memory_properties(ref_vulkan.physical_device)
         };
 
         let memory_type_index = memory_properties
@@ -79,75 +172,58 @@ impl DeviceMemoryBuilder {
             .iter()
             .enumerate()
             .position(|(i, memory_type)| {
-                let properties_satiffied = memory_type
+                let properties_satisfied = memory_type
                     .property_flags
-                    .contain(self.memory_properties);
+                    .contains(self.memory_properties);
 
-                let memory_type_bits_satisfied = (1 << i as u32) & self.memory_type_bits.0 != 0;
+                let memory_type_bits_satisfied = (1 << i as u32) & self.memory_type_bits != 0;
 
-                properties_satiffied && memory_type_bits_satisfied
+                properties_satisfied && memory_type_bits_satisfied
             })
-            .unwrap() as u32;
+            .ok_or(MemAllocErr::NoValidMemoryType)? as u32;
 
         // Allocate.
         let info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(self.size)
+            .allocation_size(allocator.capacity())
             .memory_type_index(memory_type_index)
             .build();
 
-        let handle = unsafe { vulkan.device.allocate_memory(&info, None).unwrap() };
+        let handle = unsafe { ref_vulkan.device.allocate_memory(&info, None).unwrap() };
 
-        Ok(
-            DeviceMemory {
-                handle,
-                size: self.size,
-                memory_type: memory_type_index as usize,
-            }
-        )
-    }
-}
-
-impl Buffer {
-    pub unsafe fn destroy(self, vulkan: &Vulkan) {
-        vulkan.device.destroy_buffer(self.handle, None);
-    }
-
-    pub fn compatible_memory_type_bits(&self, vulkan: &Vulkan) -> MemoryTypeBits {
-        MemoryTypeBits(self.requirements.memory_type_bits)
-    }
-}
-
-impl BufferBuilder {
-    pub fn size(&mut self, size: u64) -> &mut Self {
-        self.size = size;
-        self
-    }
-
-    pub fn usage(&mut self, usage: vk::BufferUsageFlags) -> &mut Self {
-        self.usage = usage;
-        self
-    }
-
-    pub fn build(&self, vulkan: &Vulkan) -> Buffer {
-        let device = &vulkan.device;
-
-        let info = vk::BufferCreateInfo::builder()
-            .size(self.size)
-            .usage(self.usage)
-            .sharing_mode(unimplemented!())
-            .queue_family_indices(unimplemented!())
-            .build();
-
-        let handle = unsafe { device.create_buffer(&info, None).unwrap() };
-
-        let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
-
-        Buffer {
+        Ok(DevMem {
+            vulkan,
+            capacity: allocator.capacity(),
+            allocator,
             handle,
-            requirements,
-            usage: self.usage,
-            compatible_memory_type_bits: MemoryTypeBits(requirements.memory_type_bits),
-        }
-
+            memory_type_bits: 1 << memory_type_index,
+            memory_properties,
+        })
     }
 }
+
+impl<V, M, Aed, Aor> Buffer for Buf<V, M, Aed, Aor> where
+    V: Borrow<Vulkan>,
+    M: Borrow<DevMem<V, Aed>>,
+    Aed: Allocator,
+{
+    fn handle(&self) -> vk::Buffer { self.handle }
+    fn offset(&self) -> u64 { self.offset }
+    fn capacity(&self) -> u64 { self.capacity }
+    fn alloc_data<T, D: Data<T>>(&self, info: ()) -> Result<D, DataAllocErr> {
+        unimplemented!()
+    }
+}
+
+impl<V, M, Aed, Aor> Drop for Buf<V, M, Aed, Aor> where
+    V: Borrow<Vulkan>,
+    M: Borrow<DevMem<V, Aed>>,
+    Aed: Allocator,
+{
+    fn drop(&mut self) {
+        unsafe {
+            self.memory.borrow().vulkan.borrow().device.destroy_buffer(self.handle, None);
+            self.memory.borrow().allocator.dealloc(self.offset, self.layout);
+        }
+    }
+}
+

@@ -3,11 +3,10 @@ mod linear_algebra;
 mod vulkan;
 mod window;
 mod engine;
-//mod graphics;
-//mod player;
+mod player;
 //mod field;
 mod gui;
-mod input;
+//mod input;
 
 fn main() {
     engine::run();

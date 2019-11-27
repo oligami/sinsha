@@ -1,5 +1,5 @@
-mod memory;
-pub mod render;
+pub mod memory;
+//pub mod render;
 
 use ash::vk;
 use ash::vk_make_version;

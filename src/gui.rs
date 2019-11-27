@@ -7,7 +7,7 @@ use std::ops::Range;
 pub struct StartMenu {}
 
 impl StartMenu {
-    pub fn commands(&self, command_pool: vk::CommandPool, vulkan: &Vulkan) -> vk::CommandBuffer {
+    pub fn run() -> () {
 
     }
 }

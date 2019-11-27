@@ -2,6 +2,7 @@ use std::process::Command;
 use std::path::{ PathBuf };
 
 fn main() {
+    return;
     let shader_root = PathBuf::from("src/vulkan/render/");
 
     let shaders = [
