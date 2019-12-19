@@ -16,8 +16,15 @@ pub struct Vertex {
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Ord, PartialOrd, Eq, PartialEq)]
+/// The uniform data used in shader.
 pub struct Uniform {
-    delta: XY<f32>,
+    /// Where the anchor of this drawing object is. Same as vulkan coordinates.
+    object_anchor: XY<f32>,
+    /// Where the anchor of rendering surface is. Same as vulkan coordinates.
+    surface_anchor: XY<f32>,
+    /// Difference between object anchor and surface anchor in rendering surface pixel size.
+    delta_of_anchor: XY<f32>,
+    /// Scale of drawing object in rendering surface pixel size.
     scale: XY<f32>,
 }
 

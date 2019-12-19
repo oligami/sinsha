@@ -1,14 +1,17 @@
 # version 450
 
-// input
-layout(location = 0) in vec2 tex_xy;
+// INPUTS //
+// 0. Texture Coordinates
+layout(location = 0) in vec2 tex_in;
 
-// output
-layout(location = 0) out vec4 out_color;
+// OUTPUTS //
+// 0. The Color to be Written in Framebuffer
+layout(location = 0) out vec4 color_out;
 
-// Descriptor Set
+// UNIFORM //
+// 0-1. Texture Image of the Rect2D
 layout(binding = 0, set = 1) uniform sampler2D texture_image;
 
 void main() {
-    out_color = texture(texture_image, tex_xy);
+    color_out = texture(texture_image, tex_in);
 }

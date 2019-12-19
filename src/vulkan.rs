@@ -1,5 +1,5 @@
 pub mod memory;
-//pub mod render;
+pub mod render;
 
 use ash::vk;
 use ash::vk_make_version;
@@ -46,7 +46,7 @@ impl Vulkan {
         let instance = Self::create_instance(&entry);
         let debug = DebugEXT::new_in_manually_drop(&entry, &instance);
         let surface = SurfaceKHR::new_in_manually_drop(&entry, &instance, window);
-        let (physical_device, device) = Self::create_device(&instance, &surface);
+        let (physical_device, device) = Self::create_device(&instance, &*surface);
 
         Self { entry, instance, surface, physical_device, device, debug }
     }

@@ -1,3 +1,5 @@
+mod presets;
+
 use std::alloc::Layout;
 
 use std::rc::Rc;
@@ -12,17 +14,15 @@ pub enum AllocErr {
 }
 
 pub unsafe trait InnerAllocator {
-    type Flags;
     fn capacity(&self) -> u64;
-    unsafe fn alloc(&mut self, layout: Layout, flags: Self::Flags) -> Result<u64, AllocErr>;
+    unsafe fn alloc(&mut self, layout: Layout) -> Result<u64, AllocErr>;
     unsafe fn dealloc(&mut self, offset: u64, layout: Layout);
 }
 
 /// TODO: 参照カウンタで所有権を複製しても安全かどうか。
 pub unsafe trait Allocator {
-    type Flags;
     fn capacity(&self) -> u64;
-    unsafe fn alloc(&self, layout: Layout, flags: Self::Flags) -> Result<u64, AllocErr>;
+    unsafe fn alloc(&self, layout: Layout) -> Result<u64, AllocErr>;
     unsafe fn dealloc(&self, offset: u64, layout: Layout);
 }
 
@@ -38,11 +38,10 @@ impl<T> From<TryLockError<T>> for AllocErr {
 }
 
 unsafe impl<A: InnerAllocator> Allocator for Rc<RefCell<A>> {
-    type Flags = A::Flags;
     fn capacity(&self) -> u64 { self.borrow().capacity() }
 
-    unsafe fn alloc(&self, layout: Layout, flags: Self::Flags) -> Result<u64, AllocErr> {
-        self.borrow_mut().alloc(layout, flags)
+    unsafe fn alloc(&self, layout: Layout) -> Result<u64, AllocErr> {
+        self.borrow_mut().alloc(layout)
     }
 
     unsafe fn dealloc(&self, offset: u64, layout: Layout) {
@@ -51,12 +50,11 @@ unsafe impl<A: InnerAllocator> Allocator for Rc<RefCell<A>> {
 }
 
 unsafe impl<A: InnerAllocator> Allocator for Arc<Mutex<A>> {
-    type Flags = A::Flags;
     fn capacity(&self) -> u64 { self.lock().unwrap().capacity() }
 
-    unsafe fn alloc(&self, layout: Layout, flags: Self::Flags) -> Result<u64, AllocErr> {
+    unsafe fn alloc(&self, layout: Layout) -> Result<u64, AllocErr> {
         self.try_lock()?
-            .alloc(layout, flags)
+            .alloc(layout)
     }
 
     unsafe fn dealloc(&self, offset: u64, layout: Layout) {
@@ -65,12 +63,11 @@ unsafe impl<A: InnerAllocator> Allocator for Arc<Mutex<A>> {
 }
 
 unsafe impl<A: InnerAllocator> Allocator for Arc<RwLock<A>> {
-    type Flags = A::Flags;
     fn capacity(&self) -> u64 { self.read().unwrap().capacity() }
 
-    unsafe fn alloc(&self, layout: Layout, flags: Self::Flags) -> Result<u64, AllocErr> {
+    unsafe fn alloc(&self, layout: Layout) -> Result<u64, AllocErr> {
         self.try_write()?
-            .alloc(layout, flags)
+            .alloc(layout)
     }
 
     unsafe fn dealloc(&self, offset: u64, layout: Layout) {
