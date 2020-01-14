@@ -1,7 +1,7 @@
 # version 450
 
-// CONSTANTS //
-// 0. Vertices (TRIANGLE FAN and Counter Clockwise)
+// STATIC CONSTANTS //
+// 0. Vertices (Triangle Fan and Counter Clockwise)
 vec2 VERTICES[4] = vec2[] (
     vec2 (-1.0, -1.0), // top left
     vec2 (-1.0,  1.0), // bottom left
@@ -10,6 +10,7 @@ vec2 VERTICES[4] = vec2[] (
 );
 
 // SPECIALIZATION CONSTANTS //
+// Those constants are dynamically determined in run-time when creating pipeline.
 // 0. Extent2D of Surface
 layout (constant_id = 0) const ivec2 EXTENT_2D = ivec2(1280, 720);
 
@@ -17,11 +18,18 @@ layout (constant_id = 0) const ivec2 EXTENT_2D = ivec2(1280, 720);
 // 0-0. Properties about Position of Rect2D
 layout(set = 0, binding = 0) uniform Uniform {
     // Where the anchor of this drawing object is. Same as vulkan coordinates.
+    // This anchor is on object coordinates and is the center of object's scaling;
+    // normalized coordinates to pixel coordinate.
     vec2 object_anchor;
+
     // Where the anchor of rendering surface is. Same as vulkan coordinates.
+    // This anchor is on surface coordinates and is a pin to render the object to surface.
     vec2 surface_anchor;
+
     // Difference between object anchor and surface anchor in rendering surface pixel size.
+    // This vector is from surface anchor to object anchor.
     vec2 delta_of_anchor;
+
     // Scale of drawing object in rendering surface pixel size.
     vec2 scale;
 } UNI;
@@ -40,7 +48,7 @@ void main() {
     // MODIFY VERTEX POTITION //
     // 1. Get the current Vertex.
     vec2 vertex = VERTICES[gl_VertexIndex];
-    // 2. Move by object anchor.
+    // 2. Move against object anchor.
     vec2 moved_by_object_anchor = vertex - UNI.object_anchor;
     // 3. Scale vertex in pixel size.
     vec2 scaled = moved_by_object_anchor * UNI.scale;

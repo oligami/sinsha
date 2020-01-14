@@ -13,6 +13,8 @@ use std::ops::Index;
 use std::path::Path;
 use std::ffi::CString;
 
+pub struct RenderPass;
+
 pub struct Render {
     swapchain: SwapchainKHR,
     render_pass: vk::RenderPass,
